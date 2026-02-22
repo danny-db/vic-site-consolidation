@@ -166,7 +166,7 @@ All `.py` files are **Databricks notebooks** (using `# Databricks notebook sourc
 | Requirement | Minimum Version | Notes |
 |-------------|----------------|-------|
 | **Databricks Workspace** | Any cloud (AWS, Azure, GCP) | Unity Catalog must be enabled |
-| **Databricks Runtime** | 15.4 LTS or above | Required for native Spatial SQL (`ST_*` functions) |
+| **Serverless Compute** | Environment v4 | Recommended &mdash; no cluster management needed |
 | **Unity Catalog** | Enabled | For managed Delta tables with native GEOMETRY type |
 | **Python Packages** | See below | Installed via `%pip` in notebooks |
 
@@ -176,12 +176,22 @@ Python packages installed automatically by the notebooks:
 geopandas pyshp fiona pyproj shapely folium keplergl pydeck
 ```
 
-### Cluster Setup
+### Compute Setup
+
+**Recommended: Serverless (preferred)**
+
+1. Attach notebooks to **Serverless** compute
+2. Select **Environment v4** (required for Spatial SQL `ST_*` functions)
+3. Use the **High Memory (32 GB)** option &mdash; spatial joins and cross-joins for adjacency analysis are memory-intensive
+4. No cluster provisioning, init scripts, or library configuration required
+
+**Alternative: Classic Compute**
+
+If serverless is not available in your workspace:
 
 1. Create a cluster with **Databricks Runtime 15.4 LTS** or later
-2. Recommended: **Standard_DS3_v2** or equivalent (4 cores, 14 GB) for development; scale up for full-state processing
+2. Recommended: a memory-optimised instance type (e.g., **Standard_E4ds_v5** / 32 GB) for adjacency computations
 3. Enable **Unity Catalog** access on the cluster
-4. No additional init scripts or libraries required &mdash; notebooks install dependencies via `%pip`
 
 ### Data Preparation
 
@@ -478,6 +488,8 @@ LIMIT 500;
 
 | Decision | Rationale |
 |----------|-----------|
+| **Serverless with High Memory (32 GB)** | Spatial joins are memory-intensive; serverless eliminates cluster management overhead |
+| **Environment v4** | Required for native Spatial SQL `ST_*` functions on serverless |
 | **Store in EPSG:3111 (VicGrid)** | Metre-based CRS for accurate area/distance; native CRS of all Vicmap data |
 | **Native GEOMETRY type** | Enables spatial indexing and pushdown in Databricks; avoids WKT string parsing |
 | **LGA-scoped adjacency** | Cross-join is O(n^2); scoping to one LGA keeps it tractable |

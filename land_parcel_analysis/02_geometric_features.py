@@ -38,6 +38,7 @@ dbutils.library.restartPython()
 # Create widgets
 dbutils.widgets.text("catalog_name", "danny_catalog", "Catalog Name")
 dbutils.widgets.text("schema_name", "dtp_hackathon", "Schema Name")
+dbutils.widgets.text("ai_model", "databricks-claude-opus-4-6", "AI Model Endpoint")
 
 catalog_name = dbutils.widgets.get("catalog_name")
 schema_name = dbutils.widgets.get("schema_name")
@@ -296,16 +297,32 @@ spark.sql(f"""
     -- Models the hull as a rectangle: Area = w*h, Perimeter = 2(w+h)
     -- Solving the quadratic: dimensions = P/4 +/- sqrt((P/4)^2 - A)
     -- Unlike axis-aligned bounding box, this handles rotated parcels correctly
+    --
+    -- CAVEAT: This estimate is only reliable for roughly convex parcels.
+    -- For concave lots (L-shaped, T-shaped, etc.) the convex hull is much larger
+    -- than the actual parcel, making width/depth estimates meaningless.
+    -- We use hull_efficiency (actual area / hull area) to flag unreliable estimates.
     measurements AS (
         SELECT
             *,
+            -- Hull efficiency: 1.0 = convex, lower = more concave
             CASE
-                WHEN hull_quarter_perim * hull_quarter_perim >= hull_area AND hull_area > 0
+                WHEN hull_area > 0 THEN area_sqm / hull_area
+                ELSE NULL
+            END AS hull_efficiency,
+            -- Only estimate width/depth when hull efficiency >= 0.6
+            -- Below that threshold, the rectangular model breaks down
+            CASE
+                WHEN hull_quarter_perim * hull_quarter_perim >= hull_area
+                     AND hull_area > 0
+                     AND (area_sqm / hull_area) >= 0.6
                 THEN hull_quarter_perim - SQRT(hull_quarter_perim * hull_quarter_perim - hull_area)
                 ELSE NULL
             END AS est_width_m,
             CASE
-                WHEN hull_quarter_perim * hull_quarter_perim >= hull_area AND hull_area > 0
+                WHEN hull_quarter_perim * hull_quarter_perim >= hull_area
+                     AND hull_area > 0
+                     AND (area_sqm / hull_area) >= 0.6
                 THEN hull_quarter_perim + SQRT(hull_quarter_perim * hull_quarter_perim - hull_area)
                 ELSE NULL
             END AS est_depth_m
@@ -326,6 +343,11 @@ spark.sql(f"""
         ROUND(perimeter_m, 2) AS perimeter_m,
         ROUND(est_width_m, 2) AS est_width_m,
         ROUND(est_depth_m, 2) AS est_depth_m,
+
+        -- Hull efficiency: actual area / convex hull area
+        -- 1.0 = convex shape, lower = concave (L-shaped, T-shaped, etc.)
+        -- When < 0.6, width/depth estimates above are NULLed out as unreliable
+        ROUND(hull_efficiency, 4) AS hull_efficiency,
 
         -- Centroid (WGS84)
         ROUND(centroid_lon, 6) AS centroid_lon,
@@ -362,9 +384,13 @@ spark.sql(f"""
             4
         ) AS elongation_index,
 
+        -- Sliver detection: parcels below 5 sqm are data artifacts, not real lots
+        CASE WHEN area_sqm < 5 THEN TRUE ELSE FALSE END AS is_sliver,
+
         -- Minimum site area flags (typical Victorian thresholds)
-        CASE WHEN area_sqm < 300 THEN TRUE ELSE FALSE END AS below_min_area_300,
-        CASE WHEN area_sqm < 500 THEN TRUE ELSE FALSE END AS below_min_area_500,
+        -- Excludes slivers (< 5 sqm) which are data quality issues, not consolidation candidates
+        CASE WHEN area_sqm >= 5 AND area_sqm < 300 THEN TRUE ELSE FALSE END AS below_min_area_300,
+        CASE WHEN area_sqm >= 5 AND area_sqm < 500 THEN TRUE ELSE FALSE END AS below_min_area_500,
 
         -- Lot width flags (typical frontage requirements)
         CASE WHEN LEAST(est_width_m, est_depth_m) < 10 THEN TRUE ELSE FALSE END AS narrow_lot,
@@ -1160,8 +1186,9 @@ display(spark.sql(f"""
             WHEN aspect_ratio < 0.8 THEN 'Deep'
             ELSE 'Wide'
         END AS lot_type,
-        -- Consolidation recommendation
+        -- Consolidation recommendation (slivers excluded — they are data quality issues)
         CASE
+            WHEN is_sliver THEN 'Data Quality'
             WHEN below_min_area_500 OR narrow_lot OR compactness_index < 0.3 THEN 'High Priority'
             WHEN elongation_index > 3 THEN 'Medium Priority'
             ELSE 'Low Priority'
@@ -1214,6 +1241,7 @@ shape_data = spark.sql(f"""
             ELSE 'Poor'
         END AS shape_quality,
         CASE
+            WHEN is_sliver THEN 'Data Quality'
             WHEN below_min_area_500 OR narrow_lot OR compactness_index < 0.3 THEN 'High'
             WHEN elongation_index > 3 THEN 'Medium'
             ELSE 'Low'
@@ -1222,6 +1250,7 @@ shape_data = spark.sql(f"""
     WHERE geometry IS NOT NULL
       AND centroid_lon IS NOT NULL
       AND zone_code IS NOT NULL
+      AND is_sliver = FALSE
       AND lga_name = '{target_lga_shape}'
 """).toPandas()
 
@@ -1300,6 +1329,7 @@ priority_parcels = spark.sql(f"""
         centroid_lat,
         ST_AsGeoJSON(ST_Transform(geometry, 4326)) AS geojson,
         CASE
+            WHEN is_sliver THEN 'Data Quality'
             WHEN below_min_area_500 OR narrow_lot OR compactness_index < 0.3 THEN 'High'
             WHEN elongation_index > 3 THEN 'Medium'
             ELSE 'Low'
@@ -1308,6 +1338,7 @@ priority_parcels = spark.sql(f"""
     WHERE geometry IS NOT NULL
       AND centroid_lon IS NOT NULL
       AND zone_code LIKE 'GRZ%'
+      AND is_sliver = FALSE
       {f"AND lga_name = '{target_lga_priority}'" if target_lga_priority else ""}
     LIMIT 50
 """).toPandas()
@@ -1394,6 +1425,7 @@ all_priority_parcels = spark.sql(f"""
         centroid_lat,
         ST_AsGeoJSON(ST_Transform(geometry, 4326)) AS geojson,
         CASE
+            WHEN is_sliver THEN 'Data Quality'
             WHEN below_min_area_500 OR narrow_lot OR compactness_index < 0.3 THEN 'High'
             WHEN elongation_index > 3 THEN 'Medium'
             ELSE 'Low'
@@ -1402,6 +1434,7 @@ all_priority_parcels = spark.sql(f"""
     WHERE geometry IS NOT NULL
       AND centroid_lon IS NOT NULL
       AND zone_code LIKE 'GRZ%'
+      AND is_sliver = FALSE
       AND lga_name = '{target_lga_priority}'
 """).toPandas()
 
@@ -1533,6 +1566,7 @@ display(spark.sql(f"""
 # Use ai_query() to generate a human-readable summary of zone statistics
 catalog_name = dbutils.widgets.get("catalog_name")
 schema_name = dbutils.widgets.get("schema_name")
+ai_model = dbutils.widgets.get("ai_model")
 
 zone_summary = spark.sql(f"""
     WITH zone_stats AS (
@@ -1552,7 +1586,7 @@ zone_summary = spark.sql(f"""
         LIMIT 10
     )
     SELECT ai_query(
-        'databricks-claude-opus-4-6',
+        '{ai_model}',
         CONCAT(
             'You are a Victorian land use planning analyst. Analyze these zone statistics and provide a concise 3-4 paragraph summary. ',
             'Focus on: (1) which zones have the most parcels, (2) which zones have small lots that may need consolidation, ',
@@ -1611,6 +1645,7 @@ display(spark.sql(f"""
 # Use ai_query() to generate a human-readable summary of LGA statistics
 catalog_name = dbutils.widgets.get("catalog_name")
 schema_name = dbutils.widgets.get("schema_name")
+ai_model = dbutils.widgets.get("ai_model")
 
 lga_summary = spark.sql(f"""
     WITH lga_stats AS (
@@ -1630,7 +1665,7 @@ lga_summary = spark.sql(f"""
         LIMIT 10
     )
     SELECT ai_query(
-        'databricks-claude-opus-4-6',
+        '{ai_model}',
         CONCAT(
             'You are a Victorian housing policy analyst. Analyze these Local Government Area (LGA) statistics and provide a concise 3-4 paragraph summary. ',
             'Focus on: (1) which LGAs have the most land parcels, (2) which LGAs have the highest percentage of small lots (<500sqm) indicating potential consolidation opportunities, ',
@@ -1661,18 +1696,18 @@ else:
 # MAGIC
 # MAGIC | Feature | Spatial SQL Function |
 # MAGIC |---------|---------------------|
-# MAGIC | Area | `ST_Area(ST_Transform(geometry, 3111))` |
-# MAGIC | Perimeter | `ST_Perimeter(ST_Transform(geometry, 3111))` |
-# MAGIC | Bounding Box | `ST_XMin/XMax/YMin/YMax(geometry)` |
-# MAGIC | Centroid | `ST_Centroid(geometry)` |
+# MAGIC | Area | `ST_Area(geometry)` — geometry already in EPSG:3111, no transform needed |
+# MAGIC | Perimeter | `ST_Perimeter(geometry)` — geometry already in EPSG:3111, no transform needed |
+# MAGIC | Centroid | `ST_Centroid(ST_Transform(geometry, 4326))` — transformed for web maps |
 # MAGIC | Convex Hull | `ST_ConvexHull(geometry)` |
+# MAGIC | Hull Efficiency | `ST_Area(geometry) / ST_Area(ST_ConvexHull(geometry))` — flags concave lots |
 # MAGIC | Compactness Index | `4π × area / perimeter²` |
-# MAGIC | Aspect Ratio | `width / depth` |
-# MAGIC | Elongation Index | `max(width,depth) / min(width,depth)` |
+# MAGIC | Aspect Ratio | `width / depth` (from convex hull, NULL when hull efficiency < 0.6) |
+# MAGIC | Elongation Index | `max(width,depth) / min(width,depth)` (NULL when hull efficiency < 0.6) |
 # MAGIC
 # MAGIC ### CRS Strategy
-# MAGIC - **Area/Distance calculations**: EPSG:3111 (VicGrid GDA94) for accurate metric measurements
-# MAGIC - **Storage/Visualization**: EPSG:4326 (WGS84) for web mapping compatibility
+# MAGIC - **Storage & calculations**: EPSG:3111 (VicGrid GDA94) — native metres for accurate area/distance
+# MAGIC - **Visualization only**: Transform to EPSG:4326 (WGS84) at query time for web maps
 # MAGIC
 # MAGIC ### Visualization Libraries Demonstrated
 # MAGIC - **Folium**: Interactive Leaflet-based maps with tooltips
@@ -1680,8 +1715,8 @@ else:
 # MAGIC - **PyDeck**: 3D visualization with extrusion capabilities
 # MAGIC
 # MAGIC ### Output Tables
-# MAGIC - `parcels_with_zones` - Parcels joined with zone information (geometry in EPSG:4326)
-# MAGIC - `parcel_geometric_features` - All geometric features computed
+# MAGIC - `parcels_with_zones` - Parcels joined with zone information (geometry in EPSG:3111)
+# MAGIC - `parcel_geometric_features` - All geometric features computed (geometry in EPSG:3111, centroids in WGS84)
 # MAGIC
 # MAGIC ### Next Steps
 # MAGIC - **03_edge_topology.py** - Compute frontages, shared boundaries, corner lots

@@ -33,6 +33,7 @@ dbutils.library.restartPython()
 # Create widgets
 dbutils.widgets.text("catalog_name", "danny_catalog", "Catalog Name")
 dbutils.widgets.text("schema_name", "dtp_hackathon", "Schema Name")
+dbutils.widgets.text("ai_model", "databricks-claude-opus-4-6", "AI Model Endpoint")
 
 catalog_name = dbutils.widgets.get("catalog_name")
 schema_name = dbutils.widgets.get("schema_name")
@@ -155,15 +156,11 @@ spark.sql(f"""
         p2.parcel_id AS parcel_2,
         p1.zone_code AS zone_1,
         p2.zone_code AS zone_2,
-        -- Check if they share a boundary (touch but don't overlap)
-        ST_Touches(p1.geometry, p2.geometry) AS touches,
         -- Calculate shared boundary length
+        -- Geometry is already in EPSG:3111 (VicGrid, metres) — no transform needed
         ROUND(
             ST_Length(
-                ST_Transform(
-                    ST_Intersection(ST_Boundary(p1.geometry), ST_Boundary(p2.geometry)),
-                    3111
-                )
+                ST_Intersection(ST_Boundary(p1.geometry), ST_Boundary(p2.geometry))
             ),
             2
         ) AS shared_boundary_m
@@ -262,9 +259,12 @@ schema_name = dbutils.widgets.get("schema_name")
 # - estimated_frontage_ratio: (Perimeter - Shared) / Perimeter
 #   Approximates how much boundary faces roads vs neighbors
 #   Low ratio = "internal lot" mostly surrounded by other parcels
+#   Clamped to [0, 1] to handle topology quirks where shared > perimeter
 #
-# - is_internal_lot: TRUE if >80% of boundary is shared with neighbors
-#   Internal lots often have access constraints
+# - is_internal_lot: TRUE if >95% of boundary is shared with neighbors
+#   A standard mid-block suburban lot shares ~83% of its perimeter
+#   (two sides + rear), so 0.8 would misclassify most normal lots.
+#   0.95 captures genuinely land-locked lots with no/minimal road frontage.
 #
 # - has_long_shared_boundary: TRUE if any shared boundary >15m
 #   Indicates good consolidation potential
@@ -309,6 +309,8 @@ spark.sql(f"""
         p.below_min_area_500,
         p.narrow_lot,
         p.below_frontage_15m,
+        p.is_sliver,
+        p.hull_efficiency,
         p.centroid_lon,
         p.centroid_lat,
 
@@ -318,14 +320,18 @@ spark.sql(f"""
         ROUND(COALESCE(a.longest_shared_boundary_m, 0), 2) AS longest_shared_boundary_m,
         COALESCE(a.adjacent_same_zone_count, 0) AS adjacent_same_zone_count,
 
-        -- Frontage to perimeter ratio (placeholder - would need road data)
-        -- For now, estimate based on shared boundary
+        -- Estimated frontage ratio: (perimeter - shared) / perimeter
+        -- Clamped to [0, 1] — shared boundary can exceed perimeter due to
+        -- topology quirks (overlapping neighbour boundaries at shared vertices)
         ROUND(
-            CASE
-                WHEN p.perimeter_m > 0
-                THEN (p.perimeter_m - COALESCE(a.total_shared_boundary_m, 0)) / p.perimeter_m
-                ELSE 0
-            END,
+            GREATEST(
+                CASE
+                    WHEN p.perimeter_m > 0
+                    THEN (p.perimeter_m - COALESCE(a.total_shared_boundary_m, 0)) / p.perimeter_m
+                    ELSE 0
+                END,
+                0
+            ),
             4
         ) AS estimated_frontage_ratio,
 
@@ -333,9 +339,12 @@ spark.sql(f"""
         COALESCE(a.num_adjacent_parcels, 0) = 0 AS is_isolated_lot,
         COALESCE(a.longest_shared_boundary_m, 0) > 15 AS has_long_shared_boundary,
 
-        -- Internal lot indicator (high shared boundary ratio = mostly surrounded)
+        -- Internal lot indicator: >95% of boundary shared with neighbours
+        -- A standard mid-block lot shares ~83% (two sides + rear = ~75m of ~90m),
+        -- so 0.8 would flag most normal lots. 0.95 captures genuinely
+        -- land-locked / battleaxe lots with no or minimal road frontage.
         CASE
-            WHEN p.perimeter_m > 0 AND COALESCE(a.total_shared_boundary_m, 0) / p.perimeter_m > 0.8
+            WHEN p.perimeter_m > 0 AND COALESCE(a.total_shared_boundary_m, 0) / p.perimeter_m > 0.95
             THEN TRUE
             ELSE FALSE
         END AS is_internal_lot
@@ -496,6 +505,7 @@ display(spark.sql(f"""
 # Use ai_query() to generate a human-readable summary of edge topology statistics
 catalog_name = dbutils.widgets.get("catalog_name")
 schema_name = dbutils.widgets.get("schema_name")
+ai_model = dbutils.widgets.get("ai_model")
 
 topology_summary = spark.sql(f"""
     WITH topology_stats AS (
@@ -516,7 +526,7 @@ topology_summary = spark.sql(f"""
         LIMIT 10
     )
     SELECT ai_query(
-        'databricks-claude-opus-4-6',
+        '{ai_model}',
         CONCAT(
             'You are a Victorian land use planning analyst specializing in site consolidation. Analyze these edge topology statistics and provide a concise 3-4 paragraph summary. ',
             'Focus on: (1) which zones have the best consolidation potential based on shared boundaries, (2) the prevalence of internal lots vs isolated lots, ',
@@ -885,7 +895,7 @@ if len(topology_parcels) > 0:
                 background-color:white; padding: 10px;
                 border-radius: 5px;">
         <b>Topology Classification</b><br>
-        <i style="background:#e31a1c; width:18px; height:18px; display:inline-block;"></i> Internal Lot (>80% shared)<br>
+        <i style="background:#e31a1c; width:18px; height:18px; display:inline-block;"></i> Internal Lot (>95% shared)<br>
         <i style="background:#ff7f00; width:18px; height:18px; display:inline-block;"></i> Isolated Lot (no neighbors)<br>
         <i style="background:#33a02c; width:18px; height:18px; display:inline-block;"></i> Long Shared Boundary (>15m)<br>
         <i style="background:#1f78b4; width:18px; height:18px; display:inline-block;"></i> Normal
@@ -1189,9 +1199,11 @@ if len(all_adjacency_3d) > 0:
 # MAGIC | `total_shared_boundary_m` | Total length shared with neighbours |
 # MAGIC | `longest_shared_boundary_m` | Longest shared boundary |
 # MAGIC | `adjacent_same_zone_count` | Neighbors in the same zone |
-# MAGIC | `estimated_frontage_ratio` | Estimated proportion of boundary that is road |
-# MAGIC | `is_internal_lot` | High shared boundary ratio (>80%) |
+# MAGIC | `estimated_frontage_ratio` | Estimated proportion of boundary that is road (clamped to 0-1) |
+# MAGIC | `is_internal_lot` | High shared boundary ratio (>95%) — genuinely land-locked lots |
 # MAGIC | `has_long_shared_boundary` | Has shared boundary > 15m |
+# MAGIC | `is_sliver` | Propagated from geometric features — data quality flag |
+# MAGIC | `hull_efficiency` | Propagated from geometric features — concavity measure |
 # MAGIC
 # MAGIC ### Key Spatial SQL Functions Used:
 # MAGIC - `ST_Boundary(geometry)` - Get parcel boundary as linestring

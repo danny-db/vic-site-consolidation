@@ -717,7 +717,7 @@ all_adjacency_pairs = spark.sql(f"""
     WHERE a.shared_boundary_m > 5
       AND p1.lga_name = '{sample_lga}'
     ORDER BY a.shared_boundary_m DESC
-    LIMIT 20000
+    LIMIT 50000
 """).toPandas()
 
 print(f"Loaded {len(all_adjacency_pairs)} adjacency pairs for full export")
@@ -942,7 +942,7 @@ all_topology_parcels = spark.sql(f"""
       AND centroid_lon IS NOT NULL
       AND lga_name = '{sample_lga}'
     ORDER BY total_shared_boundary_m DESC
-    LIMIT 20000
+    LIMIT 50000
 """).toPandas()
 
 print(f"Loaded {len(all_topology_parcels)} parcels for full topology export")
@@ -1124,7 +1124,7 @@ all_adjacency_3d = spark.sql(f"""
       AND num_adjacent_parcels > 0
       AND lga_name = '{sample_lga}'
     ORDER BY num_adjacent_parcels DESC
-    LIMIT 20000
+    LIMIT 50000
 """).toPandas()
 
 print(f"Loaded {len(all_adjacency_3d)} parcels for full 3D export")

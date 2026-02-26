@@ -129,14 +129,14 @@ spark.sql(f"""
     )
     SELECT
         parcel_id,
-        MAX(CASE WHEN mode = 'Train' THEN nearest_distance_m END) AS nearest_train_m,
-        MAX(CASE WHEN mode = 'Tram' THEN nearest_distance_m END) AS nearest_tram_m,
-        MAX(CASE WHEN mode = 'Bus' THEN nearest_distance_m END) AS nearest_bus_m,
+        MAX(CASE WHEN mode LIKE '%Train%' THEN nearest_distance_m END) AS nearest_train_m,
+        MAX(CASE WHEN mode LIKE '%Tram%' THEN nearest_distance_m END) AS nearest_tram_m,
+        MAX(CASE WHEN mode LIKE '%Bus%' THEN nearest_distance_m END) AS nearest_bus_m,
         MIN(nearest_distance_m) AS nearest_any_pt_m,
         -- HCTZ eligibility flags
-        MAX(CASE WHEN mode = 'Train' THEN nearest_distance_m END) <= 800 AS within_800m_train,
-        MAX(CASE WHEN mode = 'Tram' THEN nearest_distance_m END) <= 800 AS within_800m_tram,
-        MAX(CASE WHEN mode = 'Bus' THEN nearest_distance_m END) <= 400 AS within_400m_bus
+        MAX(CASE WHEN mode LIKE '%Train%' THEN nearest_distance_m END) <= 800 AS within_800m_train,
+        MAX(CASE WHEN mode LIKE '%Tram%' THEN nearest_distance_m END) <= 800 AS within_800m_tram,
+        MAX(CASE WHEN mode LIKE '%Bus%' THEN nearest_distance_m END) <= 400 AS within_400m_bus
     FROM nearest_by_mode
     GROUP BY parcel_id
 """)

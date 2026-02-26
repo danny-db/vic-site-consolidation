@@ -1,0 +1,115 @@
+bundle:
+  name: vic-site-consolidation
+
+variables:
+  catalog_name:
+    description: Unity Catalog name for storing tables
+    default: danny_catalog
+  schema_name:
+    description: Schema name within the catalog
+    default: dtp_hackathon
+
+resources:
+  jobs:
+    land_parcel_analysis:
+      name: "Land Parcel Suitability Analysis Pipeline"
+      description: >
+        Multi-stage pipeline for Victorian land parcel site consolidation
+        suitability analysis. Computes geometric features, edge topology,
+        road frontage, activity centre proximity, and final suitability scores.
+      git_source:
+        git_url: https://github.com/danny-db/vic-site-consolidation.git
+        git_provider: gitHub
+        git_branch: main
+
+      performance_target: PERFORMANCE_OPTIMIZED
+
+      environments:
+        - environment_key: serverless_env
+          spec:
+            environment_version: "4"
+            dependencies:
+              - folium
+              - keplergl
+              - pydeck
+              - mapclassify
+
+      tasks:
+        # Stage 1: Geometric Features
+        - task_key: geometric_features
+          description: "Compute geometric features (area, perimeter, compactness, aspect ratio) for all parcels"
+          environment_key: serverless_env
+          notebook_task:
+            notebook_path: land_parcel_analysis/02_geometric_features
+            base_parameters:
+              catalog_name: ${var.catalog_name}
+              schema_name: ${var.schema_name}
+            source: GIT
+
+        # Stage 2: Edge Topology (depends on geometric features)
+        - task_key: edge_topology
+          description: "Compute parcel adjacency and shared boundary analysis"
+          depends_on:
+            - task_key: geometric_features
+          environment_key: serverless_env
+          notebook_task:
+            notebook_path: land_parcel_analysis/03_edge_topology
+            base_parameters:
+              catalog_name: ${var.catalog_name}
+              schema_name: ${var.schema_name}
+            source: GIT
+
+        # Stage 3a: Road Frontage (depends on edge topology, parallel with 3b)
+        - task_key: road_frontage_analysis
+          description: "Compute road frontage features (corner lots, laneway access, frontage lengths)"
+          depends_on:
+            - task_key: edge_topology
+          environment_key: serverless_env
+          notebook_task:
+            notebook_path: land_parcel_analysis/03a_road_frontage_analysis
+            base_parameters:
+              catalog_name: ${var.catalog_name}
+              schema_name: ${var.schema_name}
+            source: GIT
+
+        # Stage 3b: Activity Centre Proximity (depends on edge topology, parallel with 3a)
+        - task_key: activity_centre_proximity
+          description: "Compute proximity to Metropolitan, Major, and Neighbourhood Activity Centres"
+          depends_on:
+            - task_key: edge_topology
+          environment_key: serverless_env
+          notebook_task:
+            notebook_path: land_parcel_analysis/03b_activity_centre_proximity
+            base_parameters:
+              catalog_name: ${var.catalog_name}
+              schema_name: ${var.schema_name}
+            source: GIT
+
+        # Stage 4: Suitability Scoring (depends on 3a and 3b)
+        - task_key: suitability_scoring
+          description: "Multi-criteria suitability scoring combining all features"
+          depends_on:
+            - task_key: road_frontage_analysis
+            - task_key: activity_centre_proximity
+          environment_key: serverless_env
+          notebook_task:
+            notebook_path: land_parcel_analysis/04_suitability_scoring
+            base_parameters:
+              catalog_name: ${var.catalog_name}
+              schema_name: ${var.schema_name}
+            source: GIT
+
+      queue:
+        enabled: true
+
+      tags:
+        project: vic-site-consolidation
+        domain: land-parcel-analysis
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: https://adb-984752964297111.11.azuredatabricks.net
+      profile: e2-azure

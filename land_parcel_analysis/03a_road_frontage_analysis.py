@@ -244,7 +244,7 @@ spark.sql(f"""
             r.road_srid
         FROM parcel_boundaries p
         JOIN road_segments r
-            ON ST_Intersects(p.boundary, ST_Buffer(r.road_geom, 1))
+            ON ST_Intersects(p.boundary, ST_Buffer(r.road_geom, 20))
     )
     SELECT
         parcel_id,
@@ -257,14 +257,14 @@ spark.sql(f"""
         ROUND(
             ST_Length(
                 ST_SetSRID(
-                    ST_Intersection(boundary, ST_Buffer(road_geom, 1)),
+                    ST_Intersection(boundary, ST_Buffer(road_geom, 20)),
                     road_srid
                 )
             ),
             2
         ) AS frontage_length_m
     FROM intersections
-    WHERE ST_Length(ST_Intersection(boundary, ST_Buffer(road_geom, 1))) > 0.5  -- Filter noise
+    WHERE ST_Length(ST_Intersection(boundary, ST_Buffer(road_geom, 20))) > 0.5  -- Filter noise
 """)
 
 print("Created parcel_road_intersections table")

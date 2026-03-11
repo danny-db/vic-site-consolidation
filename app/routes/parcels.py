@@ -1,8 +1,7 @@
 """Parcel API endpoints."""
-import math
 from fastapi import APIRouter, Query, HTTPException
 from typing import Optional
-from ..db import execute_query, execute_query_one, get_table
+from ..db import fetch_all, fetch_one
 from ..models import Parcel, ParcelDetail
 
 router = APIRouter(prefix="/api/parcels", tags=["parcels"])
@@ -17,7 +16,7 @@ PARCEL_COLUMNS = """
 
 
 @router.get("", response_model=list[Parcel])
-def list_parcels(
+async def list_parcels(
     zone: Optional[str] = Query(None, description="Filter by zone_code"),
     tier: Optional[str] = Query(None, description="Filter by suitability_tier"),
     lga: Optional[str] = Query(None, description="Filter by lga_name"),
@@ -26,106 +25,84 @@ def list_parcels(
     offset: int = Query(0, ge=0),
 ):
     """List parcels with optional filters."""
-    table = get_table("consolidation_candidates")
     conditions = []
-    params = {}
+    params = []
+    idx = 1
 
     if zone:
-        conditions.append("zone_code = %(zone)s")
-        params["zone"] = zone
+        conditions.append(f"zone_code = ${idx}")
+        params.append(zone)
+        idx += 1
     if tier:
-        conditions.append("suitability_tier = %(tier)s")
-        params["tier"] = tier
+        conditions.append(f"suitability_tier = ${idx}")
+        params.append(tier)
+        idx += 1
     if lga:
-        conditions.append("lga_name = %(lga)s")
-        params["lga"] = lga
+        conditions.append(f"lga_name = ${idx}")
+        params.append(lga)
+        idx += 1
     if min_score is not None:
-        conditions.append("suitability_score >= %(min_score)s")
-        params["min_score"] = min_score
+        conditions.append(f"suitability_score >= ${idx}")
+        params.append(min_score)
+        idx += 1
 
     where = "WHERE " + " AND ".join(conditions) if conditions else ""
-    params["limit"] = limit
-    params["offset"] = offset
+    params.extend([limit, offset])
 
     query = f"""
         SELECT {PARCEL_COLUMNS}
-        FROM {table}
+        FROM consolidation_candidates_sync
         {where}
         ORDER BY suitability_score DESC
-        LIMIT %(limit)s OFFSET %(offset)s
+        LIMIT ${idx} OFFSET ${idx + 1}
     """
-    return execute_query(query, params)
+    return await fetch_all(query, *params)
 
 
 @router.get("/nearby", response_model=list[Parcel])
-def nearby_parcels(
+async def nearby_parcels(
     lat: float = Query(..., description="Latitude"),
     lng: float = Query(..., description="Longitude"),
     radius_km: float = Query(1.0, le=10, description="Search radius in km"),
     limit: int = Query(200, le=2000),
 ):
-    """Find parcels near a point using Haversine distance."""
-    table = get_table("consolidation_candidates")
-
-    # Bounding box pre-filter for performance
-    lat_delta = radius_km / 111.0
-    lng_delta = radius_km / (111.0 * math.cos(math.radians(lat)))
-
-    params = {
-        "lat": lat, "lng": lng,
-        "lat_min": lat - lat_delta, "lat_max": lat + lat_delta,
-        "lng_min": lng - lng_delta, "lng_max": lng + lng_delta,
-        "radius_km": radius_km, "limit": limit,
-    }
-
+    """Find parcels near a point using PostGIS spatial query."""
     query = f"""
-        SELECT {PARCEL_COLUMNS} FROM (
-            SELECT {PARCEL_COLUMNS},
-                   6371.0 * ACOS(
-                       LEAST(1.0,
-                           SIN(RADIANS(centroid_lat)) * SIN(RADIANS(%(lat)s)) +
-                           COS(RADIANS(centroid_lat)) * COS(RADIANS(%(lat)s)) *
-                           COS(RADIANS(centroid_lon - %(lng)s))
-                       )
-                   ) AS distance_km
-            FROM {table}
-            WHERE centroid_lat BETWEEN %(lat_min)s AND %(lat_max)s
-              AND centroid_lon BETWEEN %(lng_min)s AND %(lng_max)s
-              AND centroid_lat IS NOT NULL
-              AND centroid_lon IS NOT NULL
-        ) t
-        WHERE distance_km <= %(radius_km)s
-        ORDER BY distance_km
-        LIMIT %(limit)s
+        SELECT {PARCEL_COLUMNS}
+        FROM candidates_geo
+        WHERE ST_DWithin(
+            location,
+            ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography,
+            $3
+        )
+        ORDER BY ST_Distance(
+            location,
+            ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography
+        )
+        LIMIT $4
     """
-    return execute_query(query, params)
+    return await fetch_all(query, lng, lat, radius_km * 1000, limit)
 
 
 @router.get("/{parcel_id}", response_model=ParcelDetail)
-def get_parcel(parcel_id: str):
+async def get_parcel(parcel_id: str):
     """Get detailed info for a single parcel."""
-    table = get_table("consolidation_candidates")
-    query = f"""
+    query = """
         SELECT parcel_id, plan_number, lot_number, zone_code, zone_description,
                lga_name, centroid_lon, centroid_lat,
-               ROUND(area_sqm, 2) AS area_sqm,
-               ROUND(perimeter_m, 2) AS perimeter_m,
-               ROUND(compactness_index, 4) AS compactness_index,
-               ROUND(aspect_ratio, 4) AS aspect_ratio,
-               ROUND(elongation_index, 4) AS elongation_index,
-               num_adjacent_parcels,
-               ROUND(longest_shared_boundary_m, 2) AS longest_shared_boundary_m,
-               adjacent_same_zone_count,
+               area_sqm, perimeter_m, compactness_index, aspect_ratio,
+               elongation_index, num_adjacent_parcels,
+               longest_shared_boundary_m, adjacent_same_zone_count,
                nearest_any_pt_m, is_growth_area_lga, lots_in_plan,
                score_growth_area_lga, score_recent_subdivision, score_mass_subdivision,
                opportunity_score, constraint_score,
                suitability_score, suitability_tier, rank,
-               ST_AsText(ST_Transform(geometry, 'EPSG:7899', 'EPSG:4326')) AS geometry_wkt
-        FROM {table}
-        WHERE parcel_id = %(parcel_id)s
+               geometry_wkt
+        FROM consolidation_candidates_sync
+        WHERE parcel_id = $1
         LIMIT 1
     """
-    row = execute_query_one(query, {"parcel_id": parcel_id})
+    row = await fetch_one(query, parcel_id)
     if not row:
         raise HTTPException(status_code=404, detail="Parcel not found")
     return row

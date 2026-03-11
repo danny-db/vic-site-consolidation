@@ -1,7 +1,7 @@
 """Consolidation candidate endpoints."""
 from fastapi import APIRouter, Query
 from typing import Optional
-from ..db import execute_query, get_table
+from ..db import fetch_all
 from ..models import Parcel, ConsolidationPair
 
 router = APIRouter(prefix="/api/candidates", tags=["candidates"])
@@ -16,64 +16,67 @@ PARCEL_COLUMNS = """
 
 
 @router.get("", response_model=list[Parcel])
-def top_candidates(
+async def top_candidates(
     tier: Optional[str] = Query(None, description="Filter by tier"),
     lga: Optional[str] = Query(None, description="Filter by LGA"),
     exclude_growth_areas: bool = Query(False, description="Exclude growth-area LGAs"),
     limit: int = Query(500, le=5000),
 ):
     """Get top consolidation candidates."""
-    table = get_table("consolidation_candidates")
     conditions = []
-    params = {}
+    params = []
+    idx = 1
 
     if tier:
-        conditions.append("suitability_tier = %(tier)s")
-        params["tier"] = tier
+        conditions.append(f"suitability_tier = ${idx}")
+        params.append(tier)
+        idx += 1
     if lga:
-        conditions.append("lga_name = %(lga)s")
-        params["lga"] = lga
+        conditions.append(f"lga_name = ${idx}")
+        params.append(lga)
+        idx += 1
     if exclude_growth_areas:
         conditions.append("is_growth_area_lga = false")
 
     where = "WHERE " + " AND ".join(conditions) if conditions else ""
-    params["limit"] = limit
+    params.append(limit)
 
     query = f"""
         SELECT {PARCEL_COLUMNS}
-        FROM {table}
+        FROM consolidation_candidates_sync
         {where}
         ORDER BY suitability_score DESC
-        LIMIT %(limit)s
+        LIMIT ${idx}
     """
-    return execute_query(query, params)
+    return await fetch_all(query, *params)
 
 
 @router.get("/pairs", response_model=list[ConsolidationPair])
-def consolidation_pairs(
+async def consolidation_pairs(
     lga: Optional[str] = Query(None, description="Filter by LGA"),
     min_combined_score: int = Query(100, description="Min combined score"),
     limit: int = Query(100, le=1000),
 ):
     """Get best consolidation pairs (adjacent parcels with high combined scores)."""
-    table = get_table("consolidation_pairs")
-    conditions = ["combined_score >= %(min_combined_score)s"]
-    params = {"min_combined_score": min_combined_score}
+    conditions = ["combined_score >= $1"]
+    params = [min_combined_score]
+    idx = 2
 
     if lga:
-        conditions.append("lga_name = %(lga)s")
-        params["lga"] = lga
+        conditions.append(f"lga_name = ${idx}")
+        params.append(lga)
+        idx += 1
 
-    params["limit"] = limit
+    params.append(limit)
     where = "WHERE " + " AND ".join(conditions)
 
     query = f"""
         SELECT parcel_1, parcel_2, shared_boundary_m, score_1, score_2,
                combined_score, zone_1, zone_2, lga_name,
                lon_1, lat_1, lon_2, lat_2, combined_area_sqm
-        FROM {table}
+        FROM consolidation_pairs_sync
         {where}
         ORDER BY combined_score DESC
-        LIMIT %(limit)s
+        LIMIT ${idx}
     """
-    return execute_query(query, params)
+    return await fetch_all(query, *params)

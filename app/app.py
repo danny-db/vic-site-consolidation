@@ -1,23 +1,33 @@
 """
 Databricks App: Victorian Site Consolidation Suitability Viewer
 
-FastAPI backend serving spatial data from Databricks SQL Warehouse with
+FastAPI backend serving spatial data from Lakebase (PostGIS) with
 a Deck.gl/MapLibre GL frontend for interactive parcel visualization.
 """
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import os
 
+from .db import get_pool, close_pool, fetch_one
 from .routes import parcels, candidates, stats
 from .models import HealthResponse
-from .db import execute_query_one, get_table
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup/shutdown: manage DB pool."""
+    await get_pool()
+    yield
+    await close_pool()
 
 
 app = FastAPI(
     title="VIC Site Consolidation Viewer",
     description="Interactive viewer for Victorian land parcel consolidation suitability analysis",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 # Register routers
@@ -27,14 +37,13 @@ app.include_router(stats.router)
 
 
 @app.get("/api/health", response_model=HealthResponse)
-def health():
+async def health():
     """Health check with basic stats."""
-    table = get_table("consolidation_candidates")
-    row = execute_query_one(f"""
+    row = await fetch_one("""
         SELECT
             COUNT(*) AS total,
             COUNT(DISTINCT suitability_tier) AS tiers
-        FROM {table}
+        FROM consolidation_candidates_sync
     """)
     return {
         "status": "healthy",
@@ -50,7 +59,7 @@ if os.path.isdir(static_dir):
 
 
 @app.get("/")
-def root():
+async def root():
     """Serve the frontend."""
     index_path = os.path.join(static_dir, "index.html")
     if os.path.exists(index_path):

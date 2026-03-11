@@ -7,15 +7,19 @@ command:
   - "8000"
 
 env:
-  - name: DATABRICKS_HOST
-    description: "Databricks workspace hostname (auto-injected in Databricks Apps)"
-  - name: DATABRICKS_TOKEN
-    description: "Databricks access token (auto-injected in Databricks Apps)"
-  - name: SQL_WAREHOUSE_HTTP_PATH
-    description: "SQL Warehouse HTTP path (e.g., /sql/1.0/warehouses/abc123)"
-  - name: UC_CATALOG
-    description: "Unity Catalog name"
-    default: "danny_catalog"
-  - name: UC_SCHEMA
-    description: "UC Schema name"
+  - name: LAKEBASE_HOST
+    description: "Lakebase Autoscaling endpoint host"
+  - name: LAKEBASE_PORT
+    description: "Lakebase Postgres port"
+    default: "5432"
+  - name: LAKEBASE_DATABASE
+    description: "Lakebase database name"
+    default: "vic_consolidation_db"
+  - name: LAKEBASE_SCHEMA
+    description: "Postgres schema name"
     default: "dtp_hackathon"
+  - name: LAKEBASE_USER
+    description: "Native Postgres role username"
+    default: "vic_consolidation_app"
+  - name: LAKEBASE_PASSWORD
+    description: "Native Postgres role password"

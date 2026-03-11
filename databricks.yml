@@ -17,7 +17,7 @@ resources:
         Multi-stage pipeline for Victorian land parcel site consolidation
         suitability analysis. Computes geometric features, edge topology,
         road frontage, activity centre proximity, suitability scores,
-        and exports verified results for the visualization app.
+        and syncs results to Lakebase (PostGIS) for the visualization app.
       performance_target: PERFORMANCE_OPTIMIZED
 
       environments:
@@ -25,6 +25,13 @@ resources:
           spec:
             environment_version: "4"
             dependencies: []
+
+        - environment_key: lakebase_env
+          spec:
+            environment_version: "4"
+            dependencies:
+              - databricks-sdk>=0.90.0
+              - psycopg2-binary
 
       tasks:
         # Stage 1: Geometric Features
@@ -91,12 +98,12 @@ resources:
               schema_name: ${var.schema_name}
             source: WORKSPACE
 
-        # Stage 5: Export Verification (depends on scoring)
-        - task_key: export_verification
-          description: "Verify consolidation candidates and create derived views for the app"
+        # Stage 5: Lakebase Sync (depends on scoring)
+        - task_key: lakebase_sync
+          description: "Sync consolidation candidates to Lakebase (PostGIS) for the visualization app"
           depends_on:
             - task_key: suitability_scoring
-          environment_key: serverless_env
+          environment_key: lakebase_env
           notebook_task:
             notebook_path: land_parcel_analysis/05_lakebase_sync.py
             base_parameters:

@@ -1,23 +1,23 @@
 """Statistics endpoints."""
 from fastapi import APIRouter
-from ..db import get_pool
+from ..db import execute_query, get_table
 from ..models import TierStats, LGAStats
 
 router = APIRouter(prefix="/api/stats", tags=["stats"])
 
 
 @router.get("/tiers", response_model=list[TierStats])
-async def tier_stats():
+def tier_stats():
     """Get summary statistics by suitability tier."""
-    pool = await get_pool()
-    query = """
+    table = get_table("consolidation_candidates")
+    query = f"""
         SELECT
             suitability_tier,
             COUNT(*) AS parcel_count,
-            ROUND(AVG(suitability_score)::numeric, 2) AS avg_score,
-            ROUND(AVG(area_sqm)::numeric, 2) AS avg_area_sqm,
-            ROUND(SUM(area_sqm)::numeric, 2) AS total_area_sqm
-        FROM candidates_points
+            ROUND(AVG(suitability_score), 2) AS avg_score,
+            ROUND(AVG(area_sqm), 2) AS avg_area_sqm,
+            ROUND(SUM(area_sqm), 2) AS total_area_sqm
+        FROM {table}
         GROUP BY suitability_tier
         ORDER BY
             CASE suitability_tier
@@ -28,26 +28,24 @@ async def tier_stats():
                 ELSE 5
             END
     """
-    rows = await pool.fetch(query)
-    return [dict(r) for r in rows]
+    return execute_query(query)
 
 
 @router.get("/lgas", response_model=list[LGAStats])
-async def lga_stats():
+def lga_stats():
     """Get summary statistics by LGA."""
-    pool = await get_pool()
+    table = get_table("consolidation_candidates")
     growth_lgas = "('CASEY','CARDINIA','WYNDHAM','MELTON','HUME','WHITTLESEA','MITCHELL')"
     query = f"""
         SELECT
             lga_name,
             COUNT(*) AS parcel_count,
-            ROUND(AVG(suitability_score)::numeric, 2) AS avg_score,
+            ROUND(AVG(suitability_score), 2) AS avg_score,
             SUM(CASE WHEN suitability_score >= 80 THEN 1 ELSE 0 END) AS high_priority_count,
-            lga_name IN {growth_lgas} AS growth_area
-        FROM candidates_points
+            CASE WHEN lga_name IN {growth_lgas} THEN true ELSE false END AS growth_area
+        FROM {table}
         WHERE lga_name IS NOT NULL
         GROUP BY lga_name
         ORDER BY avg_score DESC
     """
-    rows = await pool.fetch(query)
-    return [dict(r) for r in rows]
+    return execute_query(query)

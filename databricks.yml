@@ -8,9 +8,6 @@ variables:
   schema_name:
     description: Schema name within the catalog
     default: dtp_hackathon
-  lakebase_project_name:
-    description: Lakebase project name for PostGIS sync
-    default: vic-site-consolidation
 
 resources:
   jobs:
@@ -20,7 +17,7 @@ resources:
         Multi-stage pipeline for Victorian land parcel site consolidation
         suitability analysis. Computes geometric features, edge topology,
         road frontage, activity centre proximity, suitability scores,
-        and syncs results to Lakebase (PostGIS) for the visualization app.
+        and exports verified results for the visualization app.
       performance_target: PERFORMANCE_OPTIMIZED
 
       environments:
@@ -28,13 +25,6 @@ resources:
           spec:
             environment_version: "4"
             dependencies: []
-
-        - environment_key: lakebase_env
-          spec:
-            environment_version: "4"
-            dependencies:
-              - databricks-sdk>=0.90.0
-              - psycopg2-binary
 
       tasks:
         # Stage 1: Geometric Features
@@ -101,18 +91,17 @@ resources:
               schema_name: ${var.schema_name}
             source: WORKSPACE
 
-        # Stage 5: Lakebase Sync (depends on scoring)
-        - task_key: lakebase_sync
-          description: "Sync consolidation candidates to Lakebase (PostGIS) for the visualization app"
+        # Stage 5: Export Verification (depends on scoring)
+        - task_key: export_verification
+          description: "Verify consolidation candidates and create derived views for the app"
           depends_on:
             - task_key: suitability_scoring
-          environment_key: lakebase_env
+          environment_key: serverless_env
           notebook_task:
             notebook_path: land_parcel_analysis/05_lakebase_sync.py
             base_parameters:
               catalog_name: ${var.catalog_name}
               schema_name: ${var.schema_name}
-              lakebase_project_name: ${var.lakebase_project_name}
             source: WORKSPACE
 
       queue:

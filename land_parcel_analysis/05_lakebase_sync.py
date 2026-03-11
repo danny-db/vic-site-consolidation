@@ -1,24 +1,18 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # Stage 5: Lakebase (PostGIS) Sync
+# MAGIC # Stage 5: Data Export & Verification
 # MAGIC
-# MAGIC This notebook syncs consolidation candidate data from Unity Catalog to **Lakebase** (managed PostGIS)
-# MAGIC for serving via the Databricks App visualization layer.
+# MAGIC This notebook verifies the consolidation candidate data and creates
+# MAGIC derived views for the Databricks App visualization layer.
 # MAGIC
 # MAGIC ## What it does:
-# MAGIC 1. Creates a Lakebase Autoscaling project (if not exists)
-# MAGIC 2. Creates a UC catalog for Lakebase sync
-# MAGIC 3. Syncs `consolidation_candidates` table to Lakebase
-# MAGIC 4. Enables PostGIS and creates spatial views/indexes
-# MAGIC 5. Creates a native Postgres role for the app
+# MAGIC 1. Verifies `consolidation_candidates` table has data
+# MAGIC 2. Creates `consolidation_pairs` view for the best adjacent parcel pairs
+# MAGIC 3. Prints summary statistics for verification
 
 # COMMAND ----------
 
-# MAGIC %pip install databricks-sdk>=0.90.0 psycopg2-binary --quiet
-
-# COMMAND ----------
-
-dbutils.library.restartPython()
+# No additional pip packages needed (pure Spark SQL)
 
 # COMMAND ----------
 
@@ -29,130 +23,66 @@ dbutils.widgets.text("lakebase_project_name", "vic-site-consolidation", "Lakebas
 
 catalog_name = dbutils.widgets.get("catalog_name")
 schema_name = dbutils.widgets.get("schema_name")
-lakebase_project_name = dbutils.widgets.get("lakebase_project_name")
 
 print(f"Using: {catalog_name}.{schema_name}")
-print(f"Lakebase project: {lakebase_project_name}")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 1. Create Lakebase Project
+# MAGIC ## 1. Verify Consolidation Candidates
 
 # COMMAND ----------
 
-from databricks.sdk import WorkspaceClient
-import time
+total = spark.sql(f"SELECT COUNT(*) AS cnt FROM {catalog_name}.{schema_name}.consolidation_candidates").first()["cnt"]
+print(f"Total consolidation candidates: {total:,}")
 
-w = WorkspaceClient()
+if total == 0:
+    raise ValueError("consolidation_candidates table is empty! Check upstream pipeline stages.")
 
-# Check if project already exists
-existing_projects = list(w.lakebase.list_projects())
-project = None
-for p in existing_projects:
-    if p.name == lakebase_project_name:
-        project = p
-        print(f"Lakebase project '{lakebase_project_name}' already exists: {p.uid}")
-        break
-
-if project is None:
-    print(f"Creating Lakebase project: {lakebase_project_name}")
-    project = w.lakebase.create_project(
-        name=lakebase_project_name,
-        catalog_name=catalog_name,
-        min_capacity_units=0.5,
-        max_capacity_units=2,
-    )
-    print(f"Created project: {project.uid}")
-
-# Wait for project to be ready
-print("Waiting for Lakebase project to be ACTIVE...")
-for i in range(60):
-    p = w.lakebase.get_project(project.uid)
-    if p.status and p.status.value == "ACTIVE":
-        print(f"Project is ACTIVE after {i*10}s")
-        break
-    time.sleep(10)
-else:
-    print(f"WARNING: Project status: {p.status}")
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## 2. Create Sync Table
-
-# COMMAND ----------
-
-# Prepare data for sync: create a flat view without geometry column (use lat/lon instead)
-# Lakebase sync requires standard column types
-spark.sql(f"""
-    CREATE OR REPLACE VIEW {catalog_name}.{schema_name}.consolidation_candidates_for_sync AS
-    SELECT
-        parcel_id,
-        plan_number,
-        lot_number,
-        zone_code,
-        zone_description,
-        lga_code,
-        lga_name,
-        centroid_lon,
-        centroid_lat,
-        ROUND(area_sqm, 2) AS area_sqm,
-        ROUND(perimeter_m, 2) AS perimeter_m,
-        ROUND(compactness_index, 4) AS compactness_index,
-        ROUND(aspect_ratio, 4) AS aspect_ratio,
-        ROUND(elongation_index, 4) AS elongation_index,
-        num_adjacent_parcels,
-        ROUND(longest_shared_boundary_m, 2) AS longest_shared_boundary_m,
-        adjacent_same_zone_count,
-        ROUND(nearest_any_pt_m, 2) AS nearest_any_pt_m,
-        is_growth_area_lga,
-        lots_in_plan,
-        score_growth_area_lga,
-        score_recent_subdivision,
-        score_mass_subdivision,
-        opportunity_score,
-        constraint_score,
-        suitability_score,
-        suitability_tier,
-        rank,
-        -- WKT geometry for PostGIS reconstruction
-        ST_AsText(ST_Transform(geometry, 4326)) AS geometry_wkt
+# Tier distribution
+print("\nTier distribution:")
+tier_df = spark.sql(f"""
+    SELECT suitability_tier, COUNT(*) AS cnt,
+           ROUND(AVG(suitability_score), 1) AS avg_score
     FROM {catalog_name}.{schema_name}.consolidation_candidates
-    WHERE centroid_lon IS NOT NULL
-      AND centroid_lat IS NOT NULL
+    GROUP BY suitability_tier
+    ORDER BY avg_score DESC
 """)
-
-print("Created sync view: consolidation_candidates_for_sync")
-display(spark.sql(f"SELECT COUNT(*) AS total FROM {catalog_name}.{schema_name}.consolidation_candidates_for_sync"))
+display(tier_df)
 
 # COMMAND ----------
 
-# Create the sync table
-try:
-    sync = w.lakebase.create_sync_table(
-        project_uid=project.uid,
-        source_catalog=catalog_name,
-        source_schema=schema_name,
-        source_table="consolidation_candidates_for_sync",
-    )
-    print(f"Created sync table: {sync.uid}")
-except Exception as e:
-    if "already exists" in str(e).lower():
-        print("Sync table already exists, continuing...")
-    else:
-        raise
-
-# Wait for initial sync
-print("Waiting for initial sync to complete...")
-time.sleep(30)
-print("Sync initiated. Data should be available shortly.")
+# MAGIC %md
+# MAGIC ## 2. Growth-Area Constraint Verification
 
 # COMMAND ----------
 
-# Also sync the adjacency pairs for the consolidation pairs endpoint
+# Verify growth-area penalties are applied
+print("Growth-area LGA analysis:")
+growth_df = spark.sql(f"""
+    SELECT
+        is_growth_area_lga,
+        COUNT(*) AS cnt,
+        ROUND(AVG(suitability_score), 1) AS avg_score,
+        ROUND(AVG(score_growth_area_lga), 1) AS avg_lga_penalty,
+        ROUND(AVG(score_recent_subdivision), 1) AS avg_subdiv_penalty,
+        ROUND(AVG(score_mass_subdivision), 1) AS avg_mass_penalty
+    FROM {catalog_name}.{schema_name}.consolidation_candidates
+    GROUP BY is_growth_area_lga
+    ORDER BY is_growth_area_lga
+""")
+display(growth_df)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 3. Create Consolidation Pairs View
+
+# COMMAND ----------
+
+# Create a view for the best consolidation pairs (adjacent parcels with high combined scores)
 spark.sql(f"""
-    CREATE OR REPLACE VIEW {catalog_name}.{schema_name}.adjacency_pairs_for_sync AS
+    CREATE OR REPLACE VIEW {catalog_name}.{schema_name}.consolidation_pairs AS
     SELECT
         a.parcel_1,
         a.parcel_2,
@@ -177,125 +107,39 @@ spark.sql(f"""
       AND s1.zone_code = s2.zone_code
 """)
 
-print("Created adjacency pairs sync view")
+pairs_count = spark.sql(f"SELECT COUNT(*) AS cnt FROM {catalog_name}.{schema_name}.consolidation_pairs").first()["cnt"]
+print(f"Total consolidation pairs: {pairs_count:,}")
 
-try:
-    sync2 = w.lakebase.create_sync_table(
-        project_uid=project.uid,
-        source_catalog=catalog_name,
-        source_schema=schema_name,
-        source_table="adjacency_pairs_for_sync",
-    )
-    print(f"Created adjacency sync table: {sync2.uid}")
-except Exception as e:
-    if "already exists" in str(e).lower():
-        print("Adjacency sync table already exists, continuing...")
-    else:
-        raise
+# Top pairs
+print("\nTop 10 consolidation pairs:")
+display(spark.sql(f"""
+    SELECT * FROM {catalog_name}.{schema_name}.consolidation_pairs
+    ORDER BY combined_score DESC
+    LIMIT 10
+"""))
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 3. Enable PostGIS and Create Spatial Indexes
+# MAGIC ## 4. Top LGAs for Consolidation
 
 # COMMAND ----------
 
-# Get Lakebase connection details
-project_info = w.lakebase.get_project(project.uid)
-print(f"Lakebase project: {project_info.name}")
-print(f"Status: {project_info.status}")
-
-# COMMAND ----------
-
-import psycopg2
-
-# Connect to Lakebase using SDK-provided credentials
-conn_info = w.lakebase.get_project_connection_info(project.uid)
-
-conn = psycopg2.connect(
-    host=conn_info.host,
-    port=conn_info.port,
-    dbname=conn_info.database,
-    user=conn_info.user,
-    password=conn_info.password,
-    sslmode="require"
-)
-conn.autocommit = True
-cur = conn.cursor()
-
-# Enable PostGIS
-cur.execute("CREATE EXTENSION IF NOT EXISTS postgis;")
-print("PostGIS enabled")
-
-# Create spatial view with proper geometry from WKT
-cur.execute(f"""
-    CREATE OR REPLACE VIEW candidates_geo AS
+print("Top LGAs by average suitability score (non-growth-area):")
+display(spark.sql(f"""
     SELECT
-        *,
-        ST_SetSRID(ST_GeomFromText(geometry_wkt), 4326)::geometry AS geom,
-        ST_SetSRID(ST_MakePoint(centroid_lon, centroid_lat), 4326)::geography AS centroid_geog
-    FROM "{catalog_name}"."{schema_name}"."consolidation_candidates_for_sync"
-    WHERE geometry_wkt IS NOT NULL;
-""")
-print("Created candidates_geo spatial view")
-
-# Create a materialized view for the centroid points (for fast proximity queries)
-cur.execute(f"""
-    CREATE MATERIALIZED VIEW IF NOT EXISTS candidates_points AS
-    SELECT
-        parcel_id,
-        plan_number,
-        lot_number,
-        zone_code,
         lga_name,
-        centroid_lon,
-        centroid_lat,
-        area_sqm,
-        compactness_index,
-        num_adjacent_parcels,
-        nearest_any_pt_m,
-        is_growth_area_lga,
-        lots_in_plan,
-        opportunity_score,
-        constraint_score,
-        suitability_score,
-        suitability_tier,
-        rank,
-        ST_SetSRID(ST_MakePoint(centroid_lon, centroid_lat), 4326)::geography AS centroid_geog
-    FROM "{catalog_name}"."{schema_name}"."consolidation_candidates_for_sync"
-    WHERE centroid_lon IS NOT NULL;
-""")
-print("Created candidates_points materialized view")
-
-# Create spatial indexes
-cur.execute("""
-    CREATE INDEX IF NOT EXISTS idx_candidates_points_geog
-    ON candidates_points USING GIST (centroid_geog);
-""")
-print("Created spatial index on candidates_points")
-
-# Refresh materialized view
-cur.execute("REFRESH MATERIALIZED VIEW candidates_points;")
-print("Refreshed candidates_points materialized view")
-
-# Verify data
-cur.execute("SELECT COUNT(*) FROM candidates_points;")
-count = cur.fetchone()[0]
-print(f"\nTotal candidates in Lakebase: {count:,}")
-
-cur.execute("""
-    SELECT suitability_tier, COUNT(*) AS cnt
-    FROM candidates_points
-    GROUP BY suitability_tier
-    ORDER BY cnt DESC;
-""")
-print("\nTier distribution:")
-for row in cur.fetchall():
-    print(f"  {row[0]}: {row[1]:,}")
-
-cur.close()
-conn.close()
-print("\nLakebase sync complete!")
+        COUNT(*) AS parcel_count,
+        ROUND(AVG(suitability_score), 1) AS avg_score,
+        SUM(CASE WHEN suitability_tier = 'Tier 1 - Excellent' THEN 1 ELSE 0 END) AS tier1_count,
+        SUM(CASE WHEN suitability_tier = 'Tier 2 - Very Good' THEN 1 ELSE 0 END) AS tier2_count,
+        is_growth_area_lga
+    FROM {catalog_name}.{schema_name}.consolidation_candidates
+    GROUP BY lga_name, is_growth_area_lga
+    HAVING COUNT(*) >= 100
+    ORDER BY avg_score DESC
+    LIMIT 20
+"""))
 
 # COMMAND ----------
 
@@ -303,10 +147,10 @@ print("\nLakebase sync complete!")
 # MAGIC ## Summary
 # MAGIC
 # MAGIC This notebook:
-# MAGIC 1. Created/verified Lakebase project: `vic-site-consolidation`
-# MAGIC 2. Synced `consolidation_candidates` to Lakebase with WKT geometry
-# MAGIC 3. Synced `adjacency_pairs` for consolidation pair lookups
-# MAGIC 4. Enabled PostGIS and created spatial views with proper geometry types
-# MAGIC 5. Created spatial GIST indexes for fast proximity queries
+# MAGIC 1. Verified `consolidation_candidates` table has data
+# MAGIC 2. Validated growth-area constraint penalties are applied
+# MAGIC 3. Created `consolidation_pairs` view for the app's pairs endpoint
+# MAGIC 4. Summarized top LGAs and tier distribution
 # MAGIC
-# MAGIC The Databricks App (`app/`) connects to Lakebase to serve interactive maps.
+# MAGIC The Databricks App (`app/`) connects directly to the SQL Warehouse
+# MAGIC to serve interactive maps from these Unity Catalog tables.

@@ -7,17 +7,12 @@ command:
   - "8000"
 
 env:
-  - name: LAKEBASE_HOST
-    description: "Lakebase PostGIS host"
-  - name: LAKEBASE_PORT
-    description: "Lakebase PostGIS port"
-    default: "5432"
-  - name: LAKEBASE_DATABASE
-    description: "Lakebase database name"
-  - name: LAKEBASE_USER
-    description: "Lakebase user"
-  - name: LAKEBASE_PASSWORD
-    description: "Lakebase password"
+  - name: DATABRICKS_HOST
+    description: "Databricks workspace hostname (auto-injected in Databricks Apps)"
+  - name: DATABRICKS_TOKEN
+    description: "Databricks access token (auto-injected in Databricks Apps)"
+  - name: SQL_WAREHOUSE_HTTP_PATH
+    description: "SQL Warehouse HTTP path (e.g., /sql/1.0/warehouses/abc123)"
   - name: UC_CATALOG
     description: "Unity Catalog name"
     default: "danny_catalog"

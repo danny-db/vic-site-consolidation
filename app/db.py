@@ -1,31 +1,38 @@
-"""Database connection pool for Lakebase (PostGIS)."""
+"""Database connection for Databricks SQL Warehouse."""
 import os
-import asyncpg
+from databricks import sql as databricks_sql
 
 
-_pool = None
+def get_connection():
+    """Create a new Databricks SQL connection."""
+    host = os.environ.get("DATABRICKS_HOST", "").replace("https://", "").rstrip("/")
+    return databricks_sql.connect(
+        server_hostname=host,
+        http_path=os.environ["SQL_WAREHOUSE_HTTP_PATH"],
+        access_token=os.environ.get("DATABRICKS_TOKEN", ""),
+    )
 
 
-async def get_pool() -> asyncpg.Pool:
-    """Get or create the connection pool."""
-    global _pool
-    if _pool is None:
-        _pool = await asyncpg.create_pool(
-            host=os.environ["LAKEBASE_HOST"],
-            port=int(os.environ.get("LAKEBASE_PORT", "5432")),
-            database=os.environ["LAKEBASE_DATABASE"],
-            user=os.environ["LAKEBASE_USER"],
-            password=os.environ["LAKEBASE_PASSWORD"],
-            ssl="require",
-            min_size=2,
-            max_size=10,
-        )
-    return _pool
+def get_table(name: str) -> str:
+    """Get fully-qualified table name."""
+    catalog = os.environ.get("UC_CATALOG", "danny_catalog")
+    schema = os.environ.get("UC_SCHEMA", "dtp_hackathon")
+    return f"{catalog}.{schema}.{name}"
 
 
-async def close_pool():
-    """Close the connection pool."""
-    global _pool
-    if _pool:
-        await _pool.close()
-        _pool = None
+def execute_query(query: str, parameters=None) -> list[dict]:
+    """Execute a query and return results as list of dicts."""
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(query, parameters=parameters)
+            if cursor.description is None:
+                return []
+            columns = [desc[0] for desc in cursor.description]
+            rows = cursor.fetchall()
+            return [dict(zip(columns, row)) for row in rows]
+
+
+def execute_query_one(query: str, parameters=None) -> dict | None:
+    """Execute a query and return single result as dict."""
+    results = execute_query(query, parameters)
+    return results[0] if results else None

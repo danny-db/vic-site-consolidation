@@ -127,4 +127,5 @@ targets:
     mode: development
     default: true
     workspace:
-      host: https://fe-sandbox-dw-sandbox-serverless.cloud.databricks.com
+      host: https://adb-984752964297111.11.azuredatabricks.net
+      profile: e2-azure

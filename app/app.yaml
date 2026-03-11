@@ -1,0 +1,26 @@
+command:
+  - uvicorn
+  - app.app:app
+  - --host
+  - 0.0.0.0
+  - --port
+  - "8000"
+
+env:
+  - name: LAKEBASE_HOST
+    description: "Lakebase PostGIS host"
+  - name: LAKEBASE_PORT
+    description: "Lakebase PostGIS port"
+    default: "5432"
+  - name: LAKEBASE_DATABASE
+    description: "Lakebase database name"
+  - name: LAKEBASE_USER
+    description: "Lakebase user"
+  - name: LAKEBASE_PASSWORD
+    description: "Lakebase password"
+  - name: UC_CATALOG
+    description: "Unity Catalog name"
+    default: "danny_catalog"
+  - name: UC_SCHEMA
+    description: "UC Schema name"
+    default: "dtp_hackathon"

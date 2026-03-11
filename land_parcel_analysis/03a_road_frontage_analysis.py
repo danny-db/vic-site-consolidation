@@ -24,7 +24,7 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install folium --quiet
+# No additional pip packages needed (viz libraries removed)
 
 # COMMAND ----------
 
@@ -584,182 +584,186 @@ print(f"Retrieved {len(corner_lots)} parcels with notable frontage characteristi
 
 # COMMAND ----------
 
-import folium
-import json
-
-if len(corner_lots) > 0:
-    # Create map
-    center_lat = corner_lots['centroid_lat'].mean()
-    center_lon = corner_lots['centroid_lon'].mean()
-
-    m = folium.Map(
-        location=[center_lat, center_lon],
-        zoom_start=16,
-        tiles='CartoDB positron'
-    )
-
-    # Add parcels colored by frontage type
-    for _, row in corner_lots.iterrows():
-        try:
-            geojson = json.loads(row['geojson'])
-
-            # Color based on frontage characteristics
-            if row['is_corner_lot']:
-                color = '#e31a1c'  # Red for corner lots
-                category = "Corner Lot"
-            elif row['has_laneway_access']:
-                color = '#33a02c'  # Green for laneway access
-                category = "Laneway Access"
-            elif row['num_road_frontages'] == 0:
-                color = '#ff7f00'  # Orange for no frontage
-                category = "No Road Frontage"
-            else:
-                color = '#1f78b4'  # Blue for normal
-                category = "Normal"
-
-            tooltip = f"""
-                <b>Parcel:</b> {row['parcel_id']}<br>
-                <b>Zone:</b> {row['zone_code']}<br>
-                <b>Area:</b> {row['area_sqm']:.0f} sqm<br>
-                <b>Road Frontages:</b> {row['num_road_frontages']}<br>
-                <b>Total Frontage:</b> {row['total_frontage_m']:.1f}m<br>
-                <b>Longest Frontage:</b> {row['longest_frontage_m']:.1f}m<br>
-                <b>Type:</b> {category}
-            """
-
-            folium.GeoJson(
-                geojson,
-                style_function=lambda x, c=color: {
-                    'fillColor': c,
-                    'color': c,
-                    'weight': 2,
-                    'fillOpacity': 0.5
-                },
-                tooltip=folium.Tooltip(tooltip)
-            ).add_to(m)
-        except:
-            pass
-
-    # Add legend
-    legend_html = '''
-    <div style="position: fixed;
-                bottom: 50px; left: 50px; width: 200px; height: 130px;
-                border:2px solid grey; z-index:9999; font-size:14px;
-                background-color:white; padding: 10px;
-                border-radius: 5px;">
-        <b>Frontage Classification</b><br>
-        <i style="background:#e31a1c; width:18px; height:18px; display:inline-block;"></i> Corner Lot (2+ frontages)<br>
-        <i style="background:#33a02c; width:18px; height:18px; display:inline-block;"></i> Laneway Access<br>
-        <i style="background:#ff7f00; width:18px; height:18px; display:inline-block;"></i> No Road Frontage<br>
-        <i style="background:#1f78b4; width:18px; height:18px; display:inline-block;"></i> Normal
-    </div>
-    '''
-    m.get_root().html.add_child(folium.Element(legend_html))
-
-    displayHTML(m._repr_html_())
-else:
-    print("No parcels found for visualization")
+# NOTE: Visualization moved to Databricks App. Uncomment to run inline for debugging.
+# import folium
+# import json
+#
+# if len(corner_lots) > 0:
+#     # Create map
+#     center_lat = corner_lots['centroid_lat'].mean()
+#     center_lon = corner_lots['centroid_lon'].mean()
+#
+#     m = folium.Map(
+#         location=[center_lat, center_lon],
+#         zoom_start=16,
+#         tiles='CartoDB positron'
+#     )
+#
+#     # Add parcels colored by frontage type
+#     for _, row in corner_lots.iterrows():
+#         try:
+#             geojson = json.loads(row['geojson'])
+#
+#             # Color based on frontage characteristics
+#             if row['is_corner_lot']:
+#                 color = '#e31a1c'  # Red for corner lots
+#                 category = "Corner Lot"
+#             elif row['has_laneway_access']:
+#                 color = '#33a02c'  # Green for laneway access
+#                 category = "Laneway Access"
+#             elif row['num_road_frontages'] == 0:
+#                 color = '#ff7f00'  # Orange for no frontage
+#                 category = "No Road Frontage"
+#             else:
+#                 color = '#1f78b4'  # Blue for normal
+#                 category = "Normal"
+#
+#             tooltip = f"""
+#                 <b>Parcel:</b> {row['parcel_id']}<br>
+#                 <b>Zone:</b> {row['zone_code']}<br>
+#                 <b>Area:</b> {row['area_sqm']:.0f} sqm<br>
+#                 <b>Road Frontages:</b> {row['num_road_frontages']}<br>
+#                 <b>Total Frontage:</b> {row['total_frontage_m']:.1f}m<br>
+#                 <b>Longest Frontage:</b> {row['longest_frontage_m']:.1f}m<br>
+#                 <b>Type:</b> {category}
+#             """
+#
+#             folium.GeoJson(
+#                 geojson,
+#                 style_function=lambda x, c=color: {
+#                     'fillColor': c,
+#                     'color': c,
+#                     'weight': 2,
+#                     'fillOpacity': 0.5
+#                 },
+#                 tooltip=folium.Tooltip(tooltip)
+#             ).add_to(m)
+#         except:
+#             pass
+#
+#     # Add legend
+#     legend_html = '''
+#     <div style="position: fixed;
+#                 bottom: 50px; left: 50px; width: 200px; height: 130px;
+#                 border:2px solid grey; z-index:9999; font-size:14px;
+#                 background-color:white; padding: 10px;
+#                 border-radius: 5px;">
+#         <b>Frontage Classification</b><br>
+#         <i style="background:#e31a1c; width:18px; height:18px; display:inline-block;"></i> Corner Lot (2+ frontages)<br>
+#         <i style="background:#33a02c; width:18px; height:18px; display:inline-block;"></i> Laneway Access<br>
+#         <i style="background:#ff7f00; width:18px; height:18px; display:inline-block;"></i> No Road Frontage<br>
+#         <i style="background:#1f78b4; width:18px; height:18px; display:inline-block;"></i> Normal
+#     </div>
+#     '''
+#     m.get_root().html.add_child(folium.Element(legend_html))
+#
+#     displayHTML(m._repr_html_())
+# else:
+#     print("No parcels found for visualization")
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ### Export Full Corner Lots Map to UC Volume
+# MAGIC
+# MAGIC **Note:** Visualization has been moved to Databricks App.
 
 # COMMAND ----------
 
-# Export ALL corner lots and special frontage parcels to Folium HTML
-import folium
-import json
-
-catalog_name = dbutils.widgets.get("catalog_name")
-schema_name = dbutils.widgets.get("schema_name")
-
-# Get ALL corner lots and special frontage parcels (no limit)
-all_corner_lots = spark.sql(f"""
-    SELECT
-        parcel_id,
-        zone_code,
-        area_sqm,
-        num_road_frontages,
-        total_frontage_m,
-        longest_frontage_m,
-        is_corner_lot,
-        has_laneway_access,
-        frontage_to_perimeter_ratio,
-        centroid_lon,
-        centroid_lat,
-        ST_AsGeoJSON(ST_Transform(geometry, 4326)) AS geojson
-    FROM {catalog_name}.{schema_name}.parcel_road_frontage
-    WHERE geometry IS NOT NULL
-      AND centroid_lon IS NOT NULL
-""").toPandas()
-
-print(f"Loaded {len(all_corner_lots)} parcels for full frontage export")
-
-if len(all_corner_lots) > 0:
-    center_lat = all_corner_lots['centroid_lat'].mean()
-    center_lon = all_corner_lots['centroid_lon'].mean()
-
-    m_corner_full = folium.Map(
-        location=[center_lat, center_lon],
-        zoom_start=14,
-        tiles='CartoDB positron'
-    )
-
-    # Count by category
-    corner_count = all_corner_lots['is_corner_lot'].sum()
-    laneway_count = all_corner_lots['has_laneway_access'].sum()
-    no_frontage_count = (all_corner_lots['num_road_frontages'] == 0).sum()
-
-    for _, row in all_corner_lots.iterrows():
-        try:
-            geojson = json.loads(row['geojson'])
-
-            if row['is_corner_lot']:
-                color = '#e31a1c'
-                category = "Corner Lot"
-            elif row['has_laneway_access']:
-                color = '#33a02c'
-                category = "Laneway Access"
-            elif row['num_road_frontages'] == 0:
-                color = '#ff7f00'
-                category = "No Road Frontage"
-            else:
-                color = '#1f78b4'
-                category = "Normal"
-
-            folium.GeoJson(
-                geojson,
-                style_function=lambda x, c=color: {'fillColor': c, 'color': c, 'weight': 0.5, 'fillOpacity': 0.5},
-                tooltip=f"Parcel: {row['parcel_id']}<br>Zone: {row['zone_code']}<br>Type: {category}<br>Frontages: {row['num_road_frontages']}"
-            ).add_to(m_corner_full)
-        except:
-            pass
-
-    legend_html = f'''
-    <div style="position: fixed; bottom: 50px; left: 50px; width: 220px;
-                border:2px solid grey; z-index:9999; font-size:14px;
-                background-color:white; padding: 10px; border-radius: 5px;">
-        <b>Frontage Classification (Full)</b><br>
-        <i style="background:#e31a1c; width:18px; height:18px; display:inline-block;"></i> Corner Lot ({corner_count:,})<br>
-        <i style="background:#33a02c; width:18px; height:18px; display:inline-block;"></i> Laneway Access ({laneway_count:,})<br>
-        <i style="background:#ff7f00; width:18px; height:18px; display:inline-block;"></i> No Frontage ({no_frontage_count:,})<br>
-        <i style="background:#1f78b4; width:18px; height:18px; display:inline-block;"></i> Normal<br>
-        <small>Total: {len(all_corner_lots):,}</small>
-    </div>
-    '''
-    m_corner_full.get_root().html.add_child(folium.Element(legend_html))
-
-    # Save to UC Volume
-    volume_path = f"/Volumes/{catalog_name}/{schema_name}/source"
-    corner_html_path = f"{volume_path}/visualizations/folium_corner_lots_full.html"
-
-    import os
-    os.makedirs(f"{volume_path}/visualizations", exist_ok=True)
-
-    m_corner_full.save(corner_html_path)
-    print(f"Full corner lots map saved to: {corner_html_path}")
-    print(f"Breakdown: Corner={corner_count}, Laneway={laneway_count}, No Frontage={no_frontage_count}")
+# NOTE: Visualization moved to Databricks App. Uncomment to run inline for debugging.
+# # Export ALL corner lots and special frontage parcels to Folium HTML
+# import folium
+# import json
+#
+# catalog_name = dbutils.widgets.get("catalog_name")
+# schema_name = dbutils.widgets.get("schema_name")
+#
+# # Get ALL corner lots and special frontage parcels (no limit)
+# all_corner_lots = spark.sql(f"""
+#     SELECT
+#         parcel_id,
+#         zone_code,
+#         area_sqm,
+#         num_road_frontages,
+#         total_frontage_m,
+#         longest_frontage_m,
+#         is_corner_lot,
+#         has_laneway_access,
+#         frontage_to_perimeter_ratio,
+#         centroid_lon,
+#         centroid_lat,
+#         ST_AsGeoJSON(ST_Transform(geometry, 4326)) AS geojson
+#     FROM {catalog_name}.{schema_name}.parcel_road_frontage
+#     WHERE geometry IS NOT NULL
+#       AND centroid_lon IS NOT NULL
+# """).toPandas()
+#
+# print(f"Loaded {len(all_corner_lots)} parcels for full frontage export")
+#
+# if len(all_corner_lots) > 0:
+#     center_lat = all_corner_lots['centroid_lat'].mean()
+#     center_lon = all_corner_lots['centroid_lon'].mean()
+#
+#     m_corner_full = folium.Map(
+#         location=[center_lat, center_lon],
+#         zoom_start=14,
+#         tiles='CartoDB positron'
+#     )
+#
+#     # Count by category
+#     corner_count = all_corner_lots['is_corner_lot'].sum()
+#     laneway_count = all_corner_lots['has_laneway_access'].sum()
+#     no_frontage_count = (all_corner_lots['num_road_frontages'] == 0).sum()
+#
+#     for _, row in all_corner_lots.iterrows():
+#         try:
+#             geojson = json.loads(row['geojson'])
+#
+#             if row['is_corner_lot']:
+#                 color = '#e31a1c'
+#                 category = "Corner Lot"
+#             elif row['has_laneway_access']:
+#                 color = '#33a02c'
+#                 category = "Laneway Access"
+#             elif row['num_road_frontages'] == 0:
+#                 color = '#ff7f00'
+#                 category = "No Road Frontage"
+#             else:
+#                 color = '#1f78b4'
+#                 category = "Normal"
+#
+#             folium.GeoJson(
+#                 geojson,
+#                 style_function=lambda x, c=color: {'fillColor': c, 'color': c, 'weight': 0.5, 'fillOpacity': 0.5},
+#                 tooltip=f"Parcel: {row['parcel_id']}<br>Zone: {row['zone_code']}<br>Type: {category}<br>Frontages: {row['num_road_frontages']}"
+#             ).add_to(m_corner_full)
+#         except:
+#             pass
+#
+#     legend_html = f'''
+#     <div style="position: fixed; bottom: 50px; left: 50px; width: 220px;
+#                 border:2px solid grey; z-index:9999; font-size:14px;
+#                 background-color:white; padding: 10px; border-radius: 5px;">
+#         <b>Frontage Classification (Full)</b><br>
+#         <i style="background:#e31a1c; width:18px; height:18px; display:inline-block;"></i> Corner Lot ({corner_count:,})<br>
+#         <i style="background:#33a02c; width:18px; height:18px; display:inline-block;"></i> Laneway Access ({laneway_count:,})<br>
+#         <i style="background:#ff7f00; width:18px; height:18px; display:inline-block;"></i> No Frontage ({no_frontage_count:,})<br>
+#         <i style="background:#1f78b4; width:18px; height:18px; display:inline-block;"></i> Normal<br>
+#         <small>Total: {len(all_corner_lots):,}</small>
+#     </div>
+#     '''
+#     m_corner_full.get_root().html.add_child(folium.Element(legend_html))
+#
+#     # Save to UC Volume
+#     volume_path = f"/Volumes/{catalog_name}/{schema_name}/source"
+#     corner_html_path = f"{volume_path}/visualizations/folium_corner_lots_full.html"
+#
+#     import os
+#     os.makedirs(f"{volume_path}/visualizations", exist_ok=True)
+#
+#     m_corner_full.save(corner_html_path)
+#     print(f"Full corner lots map saved to: {corner_html_path}")
+#     print(f"Breakdown: Corner={corner_count}, Laneway={laneway_count}, No Frontage={no_frontage_count}")
 
 # COMMAND ----------
 
@@ -767,6 +771,8 @@ if len(all_corner_lots) > 0:
 # MAGIC ### Parcels Colored by Frontage Length
 # MAGIC
 # MAGIC Visualize parcels by their longest road frontage - highlighting those below minimum requirements.
+# MAGIC
+# MAGIC **Note:** Visualization has been moved to Databricks App.
 
 # COMMAND ----------
 
@@ -799,172 +805,176 @@ print(f"Retrieved {len(frontage_parcels)} residential parcels for frontage visua
 
 # COMMAND ----------
 
-import folium
-import json
-
-if len(frontage_parcels) > 0:
-    center_lat = frontage_parcels['centroid_lat'].mean()
-    center_lon = frontage_parcels['centroid_lon'].mean()
-
-    m = folium.Map(
-        location=[center_lat, center_lon],
-        zoom_start=16,
-        tiles='CartoDB positron'
-    )
-
-    # Color by frontage length
-    def get_frontage_color(frontage):
-        if frontage < 10:
-            return '#d73027'  # Red - critically narrow
-        elif frontage < 15:
-            return '#fc8d59'  # Orange - below minimum
-        elif frontage < 20:
-            return '#fee08b'  # Yellow - marginal
-        else:
-            return '#91cf60'  # Green - adequate
-
-    for _, row in frontage_parcels.iterrows():
-        try:
-            geojson = json.loads(row['geojson'])
-            color = get_frontage_color(row['longest_frontage_m'])
-
-            tooltip = f"""
-                <b>Parcel:</b> {row['parcel_id']}<br>
-                <b>Zone:</b> {row['zone_code']}<br>
-                <b>Area:</b> {row['area_sqm']:.0f} sqm<br>
-                <b>Longest Frontage:</b> {row['longest_frontage_m']:.1f}m<br>
-                <b>Meets 15m min:</b> {'Yes' if row['meets_min_frontage_15m'] else 'No'}<br>
-                <b>Frontage Ratio:</b> {row['frontage_to_perimeter_ratio']:.2%}
-            """
-
-            folium.GeoJson(
-                geojson,
-                style_function=lambda x, c=color: {
-                    'fillColor': c,
-                    'color': '#333',
-                    'weight': 1,
-                    'fillOpacity': 0.6
-                },
-                tooltip=folium.Tooltip(tooltip)
-            ).add_to(m)
-        except:
-            pass
-
-    # Add legend
-    legend_html = '''
-    <div style="position: fixed;
-                bottom: 50px; left: 50px; width: 200px;
-                border:2px solid grey; z-index:9999; font-size:14px;
-                background-color:white; padding: 10px;
-                border-radius: 5px;">
-        <b>Longest Road Frontage</b><br>
-        <i style="background:#d73027; width:18px; height:12px; display:inline-block;"></i> &lt;10m (Critical)<br>
-        <i style="background:#fc8d59; width:18px; height:12px; display:inline-block;"></i> 10-15m (Below Min)<br>
-        <i style="background:#fee08b; width:18px; height:12px; display:inline-block;"></i> 15-20m (Marginal)<br>
-        <i style="background:#91cf60; width:18px; height:12px; display:inline-block;"></i> &gt;20m (Adequate)
-    </div>
-    '''
-    m.get_root().html.add_child(folium.Element(legend_html))
-
-    displayHTML(m._repr_html_())
-else:
-    print("No parcels found for visualization")
+# NOTE: Visualization moved to Databricks App. Uncomment to run inline for debugging.
+# import folium
+# import json
+#
+# if len(frontage_parcels) > 0:
+#     center_lat = frontage_parcels['centroid_lat'].mean()
+#     center_lon = frontage_parcels['centroid_lon'].mean()
+#
+#     m = folium.Map(
+#         location=[center_lat, center_lon],
+#         zoom_start=16,
+#         tiles='CartoDB positron'
+#     )
+#
+#     # Color by frontage length
+#     def get_frontage_color(frontage):
+#         if frontage < 10:
+#             return '#d73027'  # Red - critically narrow
+#         elif frontage < 15:
+#             return '#fc8d59'  # Orange - below minimum
+#         elif frontage < 20:
+#             return '#fee08b'  # Yellow - marginal
+#         else:
+#             return '#91cf60'  # Green - adequate
+#
+#     for _, row in frontage_parcels.iterrows():
+#         try:
+#             geojson = json.loads(row['geojson'])
+#             color = get_frontage_color(row['longest_frontage_m'])
+#
+#             tooltip = f"""
+#                 <b>Parcel:</b> {row['parcel_id']}<br>
+#                 <b>Zone:</b> {row['zone_code']}<br>
+#                 <b>Area:</b> {row['area_sqm']:.0f} sqm<br>
+#                 <b>Longest Frontage:</b> {row['longest_frontage_m']:.1f}m<br>
+#                 <b>Meets 15m min:</b> {'Yes' if row['meets_min_frontage_15m'] else 'No'}<br>
+#                 <b>Frontage Ratio:</b> {row['frontage_to_perimeter_ratio']:.2%}
+#             """
+#
+#             folium.GeoJson(
+#                 geojson,
+#                 style_function=lambda x, c=color: {
+#                     'fillColor': c,
+#                     'color': '#333',
+#                     'weight': 1,
+#                     'fillOpacity': 0.6
+#                 },
+#                 tooltip=folium.Tooltip(tooltip)
+#             ).add_to(m)
+#         except:
+#             pass
+#
+#     # Add legend
+#     legend_html = '''
+#     <div style="position: fixed;
+#                 bottom: 50px; left: 50px; width: 200px;
+#                 border:2px solid grey; z-index:9999; font-size:14px;
+#                 background-color:white; padding: 10px;
+#                 border-radius: 5px;">
+#         <b>Longest Road Frontage</b><br>
+#         <i style="background:#d73027; width:18px; height:12px; display:inline-block;"></i> &lt;10m (Critical)<br>
+#         <i style="background:#fc8d59; width:18px; height:12px; display:inline-block;"></i> 10-15m (Below Min)<br>
+#         <i style="background:#fee08b; width:18px; height:12px; display:inline-block;"></i> 15-20m (Marginal)<br>
+#         <i style="background:#91cf60; width:18px; height:12px; display:inline-block;"></i> &gt;20m (Adequate)
+#     </div>
+#     '''
+#     m.get_root().html.add_child(folium.Element(legend_html))
+#
+#     displayHTML(m._repr_html_())
+# else:
+#     print("No parcels found for visualization")
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ### Export Full Frontage Length Map to UC Volume
+# MAGIC
+# MAGIC **Note:** Visualization has been moved to Databricks App.
 
 # COMMAND ----------
 
-# Export ALL residential parcels with frontage coloring to Folium HTML
-import folium
-import json
-
-catalog_name = dbutils.widgets.get("catalog_name")
-schema_name = dbutils.widgets.get("schema_name")
-
-# Get ALL residential parcels (no limit)
-all_frontage_parcels = spark.sql(f"""
-    SELECT
-        parcel_id,
-        zone_code,
-        area_sqm,
-        longest_frontage_m,
-        meets_min_frontage_15m,
-        meets_min_frontage_20m,
-        frontage_to_perimeter_ratio,
-        centroid_lon,
-        centroid_lat,
-        ST_AsGeoJSON(ST_Transform(geometry, 4326)) AS geojson
-    FROM {catalog_name}.{schema_name}.parcel_road_frontage
-    WHERE geometry IS NOT NULL
-      AND centroid_lon IS NOT NULL
-      AND (zone_code LIKE 'GRZ%' OR zone_code LIKE 'NRZ%' OR zone_code LIKE 'RGZ%')
-""").toPandas()
-
-print(f"Loaded {len(all_frontage_parcels)} residential parcels for full frontage export")
-
-if len(all_frontage_parcels) > 0:
-    center_lat = all_frontage_parcels['centroid_lat'].mean()
-    center_lon = all_frontage_parcels['centroid_lon'].mean()
-
-    m_frontage_full = folium.Map(
-        location=[center_lat, center_lon],
-        zoom_start=14,
-        tiles='CartoDB positron'
-    )
-
-    # Count by frontage category
-    critical_count = (all_frontage_parcels['longest_frontage_m'] < 10).sum()
-    below_min_count = ((all_frontage_parcels['longest_frontage_m'] >= 10) & (all_frontage_parcels['longest_frontage_m'] < 15)).sum()
-    marginal_count = ((all_frontage_parcels['longest_frontage_m'] >= 15) & (all_frontage_parcels['longest_frontage_m'] < 20)).sum()
-    adequate_count = (all_frontage_parcels['longest_frontage_m'] >= 20).sum()
-
-    def get_frontage_color(frontage):
-        if frontage < 10:
-            return '#d73027'
-        elif frontage < 15:
-            return '#fc8d59'
-        elif frontage < 20:
-            return '#fee08b'
-        else:
-            return '#91cf60'
-
-    for _, row in all_frontage_parcels.iterrows():
-        try:
-            geojson = json.loads(row['geojson'])
-            color = get_frontage_color(row['longest_frontage_m'])
-
-            folium.GeoJson(
-                geojson,
-                style_function=lambda x, c=color: {'fillColor': c, 'color': '#333', 'weight': 0.5, 'fillOpacity': 0.6},
-                tooltip=f"Parcel: {row['parcel_id']}<br>Zone: {row['zone_code']}<br>Frontage: {row['longest_frontage_m']:.1f}m"
-            ).add_to(m_frontage_full)
-        except:
-            pass
-
-    legend_html = f'''
-    <div style="position: fixed; bottom: 50px; left: 50px; width: 220px;
-                border:2px solid grey; z-index:9999; font-size:14px;
-                background-color:white; padding: 10px; border-radius: 5px;">
-        <b>Longest Road Frontage (Full)</b><br>
-        <i style="background:#d73027; width:18px; height:12px; display:inline-block;"></i> &lt;10m Critical ({critical_count:,})<br>
-        <i style="background:#fc8d59; width:18px; height:12px; display:inline-block;"></i> 10-15m Below Min ({below_min_count:,})<br>
-        <i style="background:#fee08b; width:18px; height:12px; display:inline-block;"></i> 15-20m Marginal ({marginal_count:,})<br>
-        <i style="background:#91cf60; width:18px; height:12px; display:inline-block;"></i> &gt;20m Adequate ({adequate_count:,})<br>
-        <small>Total: {len(all_frontage_parcels):,}</small>
-    </div>
-    '''
-    m_frontage_full.get_root().html.add_child(folium.Element(legend_html))
-
-    # Save to UC Volume
-    volume_path = f"/Volumes/{catalog_name}/{schema_name}/source"
-    frontage_html_path = f"{volume_path}/visualizations/folium_frontage_length_full.html"
-
-    m_frontage_full.save(frontage_html_path)
-    print(f"Full frontage length map saved to: {frontage_html_path}")
-    print(f"Breakdown: Critical={critical_count}, Below Min={below_min_count}, Marginal={marginal_count}, Adequate={adequate_count}")
+# NOTE: Visualization moved to Databricks App. Uncomment to run inline for debugging.
+# # Export ALL residential parcels with frontage coloring to Folium HTML
+# import folium
+# import json
+#
+# catalog_name = dbutils.widgets.get("catalog_name")
+# schema_name = dbutils.widgets.get("schema_name")
+#
+# # Get ALL residential parcels (no limit)
+# all_frontage_parcels = spark.sql(f"""
+#     SELECT
+#         parcel_id,
+#         zone_code,
+#         area_sqm,
+#         longest_frontage_m,
+#         meets_min_frontage_15m,
+#         meets_min_frontage_20m,
+#         frontage_to_perimeter_ratio,
+#         centroid_lon,
+#         centroid_lat,
+#         ST_AsGeoJSON(ST_Transform(geometry, 4326)) AS geojson
+#     FROM {catalog_name}.{schema_name}.parcel_road_frontage
+#     WHERE geometry IS NOT NULL
+#       AND centroid_lon IS NOT NULL
+#       AND (zone_code LIKE 'GRZ%' OR zone_code LIKE 'NRZ%' OR zone_code LIKE 'RGZ%')
+# """).toPandas()
+#
+# print(f"Loaded {len(all_frontage_parcels)} residential parcels for full frontage export")
+#
+# if len(all_frontage_parcels) > 0:
+#     center_lat = all_frontage_parcels['centroid_lat'].mean()
+#     center_lon = all_frontage_parcels['centroid_lon'].mean()
+#
+#     m_frontage_full = folium.Map(
+#         location=[center_lat, center_lon],
+#         zoom_start=14,
+#         tiles='CartoDB positron'
+#     )
+#
+#     # Count by frontage category
+#     critical_count = (all_frontage_parcels['longest_frontage_m'] < 10).sum()
+#     below_min_count = ((all_frontage_parcels['longest_frontage_m'] >= 10) & (all_frontage_parcels['longest_frontage_m'] < 15)).sum()
+#     marginal_count = ((all_frontage_parcels['longest_frontage_m'] >= 15) & (all_frontage_parcels['longest_frontage_m'] < 20)).sum()
+#     adequate_count = (all_frontage_parcels['longest_frontage_m'] >= 20).sum()
+#
+#     def get_frontage_color(frontage):
+#         if frontage < 10:
+#             return '#d73027'
+#         elif frontage < 15:
+#             return '#fc8d59'
+#         elif frontage < 20:
+#             return '#fee08b'
+#         else:
+#             return '#91cf60'
+#
+#     for _, row in all_frontage_parcels.iterrows():
+#         try:
+#             geojson = json.loads(row['geojson'])
+#             color = get_frontage_color(row['longest_frontage_m'])
+#
+#             folium.GeoJson(
+#                 geojson,
+#                 style_function=lambda x, c=color: {'fillColor': c, 'color': '#333', 'weight': 0.5, 'fillOpacity': 0.6},
+#                 tooltip=f"Parcel: {row['parcel_id']}<br>Zone: {row['zone_code']}<br>Frontage: {row['longest_frontage_m']:.1f}m"
+#             ).add_to(m_frontage_full)
+#         except:
+#             pass
+#
+#     legend_html = f'''
+#     <div style="position: fixed; bottom: 50px; left: 50px; width: 220px;
+#                 border:2px solid grey; z-index:9999; font-size:14px;
+#                 background-color:white; padding: 10px; border-radius: 5px;">
+#         <b>Longest Road Frontage (Full)</b><br>
+#         <i style="background:#d73027; width:18px; height:12px; display:inline-block;"></i> &lt;10m Critical ({critical_count:,})<br>
+#         <i style="background:#fc8d59; width:18px; height:12px; display:inline-block;"></i> 10-15m Below Min ({below_min_count:,})<br>
+#         <i style="background:#fee08b; width:18px; height:12px; display:inline-block;"></i> 15-20m Marginal ({marginal_count:,})<br>
+#         <i style="background:#91cf60; width:18px; height:12px; display:inline-block;"></i> &gt;20m Adequate ({adequate_count:,})<br>
+#         <small>Total: {len(all_frontage_parcels):,}</small>
+#     </div>
+#     '''
+#     m_frontage_full.get_root().html.add_child(folium.Element(legend_html))
+#
+#     # Save to UC Volume
+#     volume_path = f"/Volumes/{catalog_name}/{schema_name}/source"
+#     frontage_html_path = f"{volume_path}/visualizations/folium_frontage_length_full.html"
+#
+#     m_frontage_full.save(frontage_html_path)
+#     print(f"Full frontage length map saved to: {frontage_html_path}")
+#     print(f"Breakdown: Critical={critical_count}, Below Min={below_min_count}, Marginal={marginal_count}, Adequate={adequate_count}")
 
 # COMMAND ----------
 

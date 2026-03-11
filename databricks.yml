@@ -8,6 +8,9 @@ variables:
   schema_name:
     description: Schema name within the catalog
     default: dtp_hackathon
+  lakebase_project_name:
+    description: Lakebase project name for PostGIS sync
+    default: vic-site-consolidation
 
 resources:
   jobs:
@@ -16,35 +19,34 @@ resources:
       description: >
         Multi-stage pipeline for Victorian land parcel site consolidation
         suitability analysis. Computes geometric features, edge topology,
-        road frontage, activity centre proximity, and final suitability scores.
-      git_source:
-        git_url: https://github.com/danny-db/vic-site-consolidation.git
-        git_provider: gitHub
-        git_branch: main
-
+        road frontage, activity centre proximity, suitability scores,
+        and syncs results to Lakebase (PostGIS) for the visualization app.
       performance_target: PERFORMANCE_OPTIMIZED
 
       environments:
         - environment_key: serverless_env
           spec:
             environment_version: "4"
+            dependencies: []
+
+        - environment_key: lakebase_env
+          spec:
+            environment_version: "4"
             dependencies:
-              - folium
-              - keplergl
-              - pydeck
-              - mapclassify
+              - databricks-sdk>=0.90.0
+              - psycopg2-binary
 
       tasks:
         # Stage 1: Geometric Features
         - task_key: geometric_features
-          description: "Compute geometric features (area, perimeter, compactness, aspect ratio) for all parcels"
+          description: "Compute geometric features (area, perimeter, compactness, aspect ratio, lots_in_plan) for all parcels"
           environment_key: serverless_env
           notebook_task:
-            notebook_path: land_parcel_analysis/02_geometric_features
+            notebook_path: land_parcel_analysis/02_geometric_features.py
             base_parameters:
               catalog_name: ${var.catalog_name}
               schema_name: ${var.schema_name}
-            source: GIT
+            source: WORKSPACE
 
         # Stage 2: Edge Topology (depends on geometric features)
         - task_key: edge_topology
@@ -53,11 +55,11 @@ resources:
             - task_key: geometric_features
           environment_key: serverless_env
           notebook_task:
-            notebook_path: land_parcel_analysis/03_edge_topology
+            notebook_path: land_parcel_analysis/03_edge_topology.py
             base_parameters:
               catalog_name: ${var.catalog_name}
               schema_name: ${var.schema_name}
-            source: GIT
+            source: WORKSPACE
 
         # Stage 3a: Road Frontage (depends on edge topology, parallel with 3b)
         - task_key: road_frontage_analysis
@@ -66,11 +68,11 @@ resources:
             - task_key: edge_topology
           environment_key: serverless_env
           notebook_task:
-            notebook_path: land_parcel_analysis/03a_road_frontage_analysis
+            notebook_path: land_parcel_analysis/03a_road_frontage_analysis.py
             base_parameters:
               catalog_name: ${var.catalog_name}
               schema_name: ${var.schema_name}
-            source: GIT
+            source: WORKSPACE
 
         # Stage 3b: Activity Centre Proximity (depends on edge topology, parallel with 3a)
         - task_key: activity_centre_proximity
@@ -79,25 +81,39 @@ resources:
             - task_key: edge_topology
           environment_key: serverless_env
           notebook_task:
-            notebook_path: land_parcel_analysis/03b_activity_centre_proximity
+            notebook_path: land_parcel_analysis/03b_activity_centre_proximity.py
             base_parameters:
               catalog_name: ${var.catalog_name}
               schema_name: ${var.schema_name}
-            source: GIT
+            source: WORKSPACE
 
         # Stage 4: Suitability Scoring (depends on 3a and 3b)
         - task_key: suitability_scoring
-          description: "Multi-criteria suitability scoring combining all features"
+          description: "Multi-criteria suitability scoring with growth-area constraints"
           depends_on:
             - task_key: road_frontage_analysis
             - task_key: activity_centre_proximity
           environment_key: serverless_env
           notebook_task:
-            notebook_path: land_parcel_analysis/04_suitability_scoring
+            notebook_path: land_parcel_analysis/04_suitability_scoring.py
             base_parameters:
               catalog_name: ${var.catalog_name}
               schema_name: ${var.schema_name}
-            source: GIT
+            source: WORKSPACE
+
+        # Stage 5: Lakebase Sync (depends on scoring)
+        - task_key: lakebase_sync
+          description: "Sync consolidation candidates to Lakebase (PostGIS) for the visualization app"
+          depends_on:
+            - task_key: suitability_scoring
+          environment_key: lakebase_env
+          notebook_task:
+            notebook_path: land_parcel_analysis/05_lakebase_sync.py
+            base_parameters:
+              catalog_name: ${var.catalog_name}
+              schema_name: ${var.schema_name}
+              lakebase_project_name: ${var.lakebase_project_name}
+            source: WORKSPACE
 
       queue:
         enabled: true
@@ -111,5 +127,4 @@ targets:
     mode: development
     default: true
     workspace:
-      host: https://adb-984752964297111.11.azuredatabricks.net
-      profile: e2-azure
+      host: https://fe-sandbox-dw-sandbox-serverless.cloud.databricks.com

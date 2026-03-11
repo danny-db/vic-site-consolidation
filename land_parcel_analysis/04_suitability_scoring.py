@@ -26,7 +26,7 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install folium keplergl pydeck --quiet
+# No additional pip packages needed (viz libraries removed)
 
 # COMMAND ----------
 
@@ -227,6 +227,13 @@ scoring_weights = {
     "flood_overlay": -40,               # Flood constraint
     "eso_overlay": -30,                 # Environmental significance
     "large_lot": -15,                   # Already large (>1000sqm)
+
+    # Growth-area constraints (negative scores)
+    "growth_area_lga": -35,             # Growth-area LGA (Casey, Cardinia, etc.)
+    "recent_subdivision_high": -25,     # Very recent subdivision (PS>700000)
+    "recent_subdivision_med": -15,      # Recent subdivision (PS>500000)
+    "mass_subdivision_large": -20,      # Mass subdivision (50+ lots in plan)
+    "mass_subdivision_med": -10,        # Medium subdivision (20-49 lots in plan)
 }
 
 print("Scoring weights defined:")
@@ -339,6 +346,27 @@ spark.sql(f"""
         CASE WHEN COALESCE(ov.has_eso_overlay, 0) = 1 THEN -30 ELSE 0 END AS score_eso_overlay,
         CASE WHEN COALESCE(ov.has_vpo_overlay, 0) = 1 THEN -20 ELSE 0 END AS score_vpo_overlay,
 
+        -- Growth-area constraints
+        CASE WHEN e.lga_name IN ('CASEY','CARDINIA','WYNDHAM','MELTON','HUME','WHITTLESEA','MITCHELL')
+             THEN -35 ELSE 0 END AS score_growth_area_lga,
+        CASE
+            WHEN e.plan_number LIKE 'PS%'
+                 AND CAST(REGEXP_EXTRACT(e.plan_number, '[0-9]+', 0) AS INT) > 700000
+            THEN -25
+            WHEN e.plan_number LIKE 'PS%'
+                 AND CAST(REGEXP_EXTRACT(e.plan_number, '[0-9]+', 0) AS INT) > 500000
+            THEN -15
+            ELSE 0
+        END AS score_recent_subdivision,
+        CASE WHEN COALESCE(g.lots_in_plan, 0) >= 50 THEN -20
+             WHEN COALESCE(g.lots_in_plan, 0) >= 20 THEN -10
+             ELSE 0
+        END AS score_mass_subdivision,
+
+        -- Growth-area flags for reference
+        e.lga_name IN ('CASEY','CARDINIA','WYNDHAM','MELTON','HUME','WHITTLESEA','MITCHELL') AS is_growth_area_lga,
+        COALESCE(g.lots_in_plan, 0) AS lots_in_plan,
+
         -- Overlay flags for reference
         COALESCE(ov.has_heritage_overlay, 0) = 1 AS has_heritage_overlay,
         COALESCE(ov.has_flood_overlay, 0) = 1 AS has_flood_overlay,
@@ -372,7 +400,15 @@ spark.sql(f"""
             CASE WHEN COALESCE(ov.has_heritage_overlay, 0) = 1 THEN -50 ELSE 0 END +
             CASE WHEN COALESCE(ov.has_flood_overlay, 0) = 1 THEN -40 ELSE 0 END +
             CASE WHEN COALESCE(ov.has_eso_overlay, 0) = 1 THEN -30 ELSE 0 END +
-            CASE WHEN COALESCE(ov.has_vpo_overlay, 0) = 1 THEN -20 ELSE 0 END
+            CASE WHEN COALESCE(ov.has_vpo_overlay, 0) = 1 THEN -20 ELSE 0 END +
+            -- Growth-area constraints
+            CASE WHEN e.lga_name IN ('CASEY','CARDINIA','WYNDHAM','MELTON','HUME','WHITTLESEA','MITCHELL') THEN -35 ELSE 0 END +
+            CASE WHEN e.plan_number LIKE 'PS%' AND CAST(REGEXP_EXTRACT(e.plan_number, '[0-9]+', 0) AS INT) > 700000 THEN -25
+                 WHEN e.plan_number LIKE 'PS%' AND CAST(REGEXP_EXTRACT(e.plan_number, '[0-9]+', 0) AS INT) > 500000 THEN -15
+                 ELSE 0 END +
+            CASE WHEN COALESCE(g.lots_in_plan, 0) >= 50 THEN -20
+                 WHEN COALESCE(g.lots_in_plan, 0) >= 20 THEN -10
+                 ELSE 0 END
         ) AS constraint_score,
 
         -- Final suitability score (opportunity + constraint)
@@ -401,10 +437,19 @@ spark.sql(f"""
             CASE WHEN COALESCE(ov.has_heritage_overlay, 0) = 1 THEN -50 ELSE 0 END +
             CASE WHEN COALESCE(ov.has_flood_overlay, 0) = 1 THEN -40 ELSE 0 END +
             CASE WHEN COALESCE(ov.has_eso_overlay, 0) = 1 THEN -30 ELSE 0 END +
-            CASE WHEN COALESCE(ov.has_vpo_overlay, 0) = 1 THEN -20 ELSE 0 END
+            CASE WHEN COALESCE(ov.has_vpo_overlay, 0) = 1 THEN -20 ELSE 0 END +
+            -- Growth-area constraints
+            CASE WHEN e.lga_name IN ('CASEY','CARDINIA','WYNDHAM','MELTON','HUME','WHITTLESEA','MITCHELL') THEN -35 ELSE 0 END +
+            CASE WHEN e.plan_number LIKE 'PS%' AND CAST(REGEXP_EXTRACT(e.plan_number, '[0-9]+', 0) AS INT) > 700000 THEN -25
+                 WHEN e.plan_number LIKE 'PS%' AND CAST(REGEXP_EXTRACT(e.plan_number, '[0-9]+', 0) AS INT) > 500000 THEN -15
+                 ELSE 0 END +
+            CASE WHEN COALESCE(g.lots_in_plan, 0) >= 50 THEN -20
+                 WHEN COALESCE(g.lots_in_plan, 0) >= 20 THEN -10
+                 ELSE 0 END
         ) AS suitability_score
 
     FROM {catalog_name}.{schema_name}.parcel_edge_topology e
+    LEFT JOIN {catalog_name}.{schema_name}.parcel_geometric_features g ON e.parcel_id = g.parcel_id
     LEFT JOIN {catalog_name}.{schema_name}.parcel_pt_proximity pt ON e.parcel_id = pt.parcel_id
     LEFT JOIN {catalog_name}.{schema_name}.parcel_activity_centre_proximity ac ON e.parcel_id = ac.parcel_id
     LEFT JOIN {catalog_name}.{schema_name}.parcel_road_frontage rf ON e.parcel_id = rf.parcel_id
@@ -792,6 +837,11 @@ spark.sql(f"""
         longest_shared_boundary_m,
         adjacent_same_zone_count,
         nearest_any_pt_m,
+        is_growth_area_lga,
+        lots_in_plan,
+        score_growth_area_lga,
+        score_recent_subdivision,
+        score_mass_subdivision,
         opportunity_score,
         constraint_score,
         suitability_score,
@@ -980,37 +1030,40 @@ display(spark.sql(f"""
 # MAGIC ## 11. Visualize Suitability Scores with Folium
 # MAGIC
 # MAGIC Interactive map showing parcels colored by their suitability tier.
+# MAGIC
+# MAGIC **NOTE: Visualization moved to Databricks App.**
 
 # COMMAND ----------
 
-catalog_name = dbutils.widgets.get("catalog_name")
-schema_name = dbutils.widgets.get("schema_name")
-
-# Get top consolidation candidates with geometry for visualization
-candidates_df = spark.sql(f"""
-    SELECT
-        parcel_id,
-        zone_code,
-        lga_name,
-        area_sqm,
-        suitability_score,
-        suitability_tier,
-        opportunity_score,
-        constraint_score,
-        num_adjacent_parcels,
-        nearest_any_pt_m,
-        centroid_lon,
-        centroid_lat,
-        ST_AsGeoJSON(ST_Transform(geometry, 4326)) AS geojson
-    FROM {catalog_name}.{schema_name}.consolidation_candidates
-    WHERE geometry IS NOT NULL
-      AND centroid_lon IS NOT NULL
-    ORDER BY suitability_score DESC
-    LIMIT 100
-""")
-
-candidates = candidates_df.toPandas()
-print(f"Retrieved {len(candidates)} parcels for visualization")
+# NOTE: Visualization moved to Databricks App. Uncomment to run inline for debugging.
+# catalog_name = dbutils.widgets.get("catalog_name")
+# schema_name = dbutils.widgets.get("schema_name")
+#
+# # Get top consolidation candidates with geometry for visualization
+# candidates_df = spark.sql(f"""
+#     SELECT
+#         parcel_id,
+#         zone_code,
+#         lga_name,
+#         area_sqm,
+#         suitability_score,
+#         suitability_tier,
+#         opportunity_score,
+#         constraint_score,
+#         num_adjacent_parcels,
+#         nearest_any_pt_m,
+#         centroid_lon,
+#         centroid_lat,
+#         ST_AsGeoJSON(ST_Transform(geometry, 4326)) AS geojson
+#     FROM {catalog_name}.{schema_name}.consolidation_candidates
+#     WHERE geometry IS NOT NULL
+#       AND centroid_lon IS NOT NULL
+#     ORDER BY suitability_score DESC
+#     LIMIT 100
+# """)
+#
+# candidates = candidates_df.toPandas()
+# print(f"Retrieved {len(candidates)} parcels for visualization")
 
 # COMMAND ----------
 
@@ -1018,212 +1071,216 @@ print(f"Retrieved {len(candidates)} parcels for visualization")
 # MAGIC ### Folium Map: Suitability Score Heatmap
 # MAGIC
 # MAGIC Parcels colored by suitability tier from red (Tier 1 - Excellent) to blue (Tier 5 - Low).
+# MAGIC
+# MAGIC **NOTE: Visualization moved to Databricks App.**
 
 # COMMAND ----------
 
-import folium
-import json
-
-if len(candidates) > 0:
-    # Create map centered on parcels
-    center_lat = candidates['centroid_lat'].mean()
-    center_lon = candidates['centroid_lon'].mean()
-
-    m = folium.Map(
-        location=[center_lat, center_lon],
-        zoom_start=15,
-        tiles='CartoDB positron'
-    )
-
-    # Color scale for suitability tiers
-    tier_colors = {
-        'Tier 1 - Excellent': '#d7191c',   # Dark red
-        'Tier 2 - Very Good': '#fdae61',   # Orange
-        'Tier 3 - Good': '#ffffbf',        # Yellow
-        'Tier 4 - Moderate': '#a6d96a',    # Light green
-        'Tier 5 - Low': '#1a9641'          # Dark green
-    }
-
-    # Add parcels
-    for _, row in candidates.iterrows():
-        try:
-            geojson = json.loads(row['geojson'])
-            color = tier_colors.get(row['suitability_tier'], '#808080')
-
-            tooltip = f"""
-                <b>Parcel:</b> {row['parcel_id']}<br>
-                <b>Zone:</b> {row['zone_code']}<br>
-                <b>Area:</b> {row['area_sqm']:.0f} sqm<br>
-                <b>Score:</b> {row['suitability_score']}<br>
-                <b>Tier:</b> {row['suitability_tier']}<br>
-                <b>Neighbors:</b> {row['num_adjacent_parcels']}<br>
-                <b>Nearest PT:</b> {row['nearest_any_pt_m']:.0f}m
-            """
-
-            folium.GeoJson(
-                geojson,
-                style_function=lambda x, c=color: {
-                    'fillColor': c,
-                    'color': '#333333',
-                    'weight': 1,
-                    'fillOpacity': 0.7
-                },
-                tooltip=folium.Tooltip(tooltip)
-            ).add_to(m)
-        except:
-            pass
-
-    # Add legend
-    legend_html = '''
-    <div style="position: fixed;
-                bottom: 50px; left: 50px; width: 200px; height: 150px;
-                border:2px solid grey; z-index:9999; font-size:14px;
-                background-color:white; padding: 10px;
-                border-radius: 5px;">
-        <b>Suitability Tier</b><br>
-        <i style="background:#d7191c; width:18px; height:18px; display:inline-block;"></i> Tier 1 - Excellent<br>
-        <i style="background:#fdae61; width:18px; height:18px; display:inline-block;"></i> Tier 2 - Very Good<br>
-        <i style="background:#ffffbf; width:18px; height:18px; display:inline-block;"></i> Tier 3 - Good<br>
-        <i style="background:#a6d96a; width:18px; height:18px; display:inline-block;"></i> Tier 4 - Moderate<br>
-        <i style="background:#1a9641; width:18px; height:18px; display:inline-block;"></i> Tier 5 - Low
-    </div>
-    '''
-    m.get_root().html.add_child(folium.Element(legend_html))
-
-    # Use displayHTML for proper rendering in Databricks
-    displayHTML(m._repr_html_())
-else:
-    print("No candidates found for visualization")
+# NOTE: Visualization moved to Databricks App. Uncomment to run inline for debugging.
+# import folium
+# import json
+#
+# if len(candidates) > 0:
+#     # Create map centered on parcels
+#     center_lat = candidates['centroid_lat'].mean()
+#     center_lon = candidates['centroid_lon'].mean()
+#
+#     m = folium.Map(
+#         location=[center_lat, center_lon],
+#         zoom_start=15,
+#         tiles='CartoDB positron'
+#     )
+#
+#     # Color scale for suitability tiers
+#     tier_colors = {
+#         'Tier 1 - Excellent': '#d7191c',   # Dark red
+#         'Tier 2 - Very Good': '#fdae61',   # Orange
+#         'Tier 3 - Good': '#ffffbf',        # Yellow
+#         'Tier 4 - Moderate': '#a6d96a',    # Light green
+#         'Tier 5 - Low': '#1a9641'          # Dark green
+#     }
+#
+#     # Add parcels
+#     for _, row in candidates.iterrows():
+#         try:
+#             geojson = json.loads(row['geojson'])
+#             color = tier_colors.get(row['suitability_tier'], '#808080')
+#
+#             tooltip = f"""
+#                 <b>Parcel:</b> {row['parcel_id']}<br>
+#                 <b>Zone:</b> {row['zone_code']}<br>
+#                 <b>Area:</b> {row['area_sqm']:.0f} sqm<br>
+#                 <b>Score:</b> {row['suitability_score']}<br>
+#                 <b>Tier:</b> {row['suitability_tier']}<br>
+#                 <b>Neighbors:</b> {row['num_adjacent_parcels']}<br>
+#                 <b>Nearest PT:</b> {row['nearest_any_pt_m']:.0f}m
+#             """
+#
+#             folium.GeoJson(
+#                 geojson,
+#                 style_function=lambda x, c=color: {
+#                     'fillColor': c,
+#                     'color': '#333333',
+#                     'weight': 1,
+#                     'fillOpacity': 0.7
+#                 },
+#                 tooltip=folium.Tooltip(tooltip)
+#             ).add_to(m)
+#         except:
+#             pass
+#
+#     # Add legend
+#     legend_html = '''
+#     <div style="position: fixed;
+#                 bottom: 50px; left: 50px; width: 200px; height: 150px;
+#                 border:2px solid grey; z-index:9999; font-size:14px;
+#                 background-color:white; padding: 10px;
+#                 border-radius: 5px;">
+#         <b>Suitability Tier</b><br>
+#         <i style="background:#d7191c; width:18px; height:18px; display:inline-block;"></i> Tier 1 - Excellent<br>
+#         <i style="background:#fdae61; width:18px; height:18px; display:inline-block;"></i> Tier 2 - Very Good<br>
+#         <i style="background:#ffffbf; width:18px; height:18px; display:inline-block;"></i> Tier 3 - Good<br>
+#         <i style="background:#a6d96a; width:18px; height:18px; display:inline-block;"></i> Tier 4 - Moderate<br>
+#         <i style="background:#1a9641; width:18px; height:18px; display:inline-block;"></i> Tier 5 - Low
+#     </div>
+#     '''
+#     m.get_root().html.add_child(folium.Element(legend_html))
+#
+#     # Use displayHTML for proper rendering in Databricks
+#     displayHTML(m._repr_html_())
+# else:
+#     print("No candidates found for visualization")
 
 # COMMAND ----------
 
-# Export consolidation candidates for target LGA to Folium HTML (filtered to avoid OOM)
-import folium
-import json
-
-catalog_name = dbutils.widgets.get("catalog_name")
-schema_name = dbutils.widgets.get("schema_name")
-
-# Use Casey LGA - Metro Melbourne area with good Activity Centre coverage
-target_lga = "CASEY"
-
-# Verify the LGA exists in consolidation candidates
-lga_check = spark.sql(f"""
-    SELECT COUNT(*) AS cnt
-    FROM {catalog_name}.{schema_name}.consolidation_candidates
-    WHERE lga_name = '{target_lga}'
-""").collect()[0]['cnt']
-
-if lga_check == 0:
-    print(f"WARNING: {target_lga} not found. Falling back to most common LGA.")
-    target_lga = "CASEY"  # Default to Casey LGA
-
-print(f"Exporting consolidation candidates for LGA: {target_lga} ({lga_check:,} parcels)")
-
-# Get consolidation candidates filtered by LGA
-# Limit to top 2000 parcels to avoid OOM
-all_candidates_df = spark.sql(f"""
-    SELECT
-        parcel_id,
-        zone_code,
-        lga_name,
-        area_sqm,
-        suitability_score,
-        suitability_tier,
-        opportunity_score,
-        constraint_score,
-        num_adjacent_parcels,
-        nearest_any_pt_m,
-        centroid_lon,
-        centroid_lat,
-        ST_AsGeoJSON(ST_Transform(geometry, 4326)) AS geojson
-    FROM {catalog_name}.{schema_name}.consolidation_candidates
-    WHERE geometry IS NOT NULL
-      AND centroid_lon IS NOT NULL
-      AND lga_name = '{target_lga}'
-    ORDER BY suitability_score DESC
-    LIMIT 2000
-""")
-
-all_candidates = all_candidates_df.toPandas()
-print(f"Retrieved {len(all_candidates)} parcels for full Folium export")
-
-if len(all_candidates) > 0:
-    # Create map centered on parcels
-    center_lat = all_candidates['centroid_lat'].mean()
-    center_lon = all_candidates['centroid_lon'].mean()
-
-    m_full = folium.Map(
-        location=[center_lat, center_lon],
-        zoom_start=14,
-        tiles='CartoDB positron'
-    )
-
-    # Color scale for suitability tiers
-    tier_colors = {
-        'Tier 1 - Excellent': '#d7191c',
-        'Tier 2 - Very Good': '#fdae61',
-        'Tier 3 - Good': '#ffffbf',
-        'Tier 4 - Moderate': '#a6d96a',
-        'Tier 5 - Low': '#1a9641'
-    }
-
-    # Add ALL parcels
-    for _, row in all_candidates.iterrows():
-        try:
-            geojson = json.loads(row['geojson'])
-            color = tier_colors.get(row['suitability_tier'], '#808080')
-
-            tooltip = f"""
-                <b>Parcel:</b> {row['parcel_id']}<br>
-                <b>Zone:</b> {row['zone_code']}<br>
-                <b>Area:</b> {row['area_sqm']:.0f} sqm<br>
-                <b>Score:</b> {row['suitability_score']}<br>
-                <b>Tier:</b> {row['suitability_tier']}<br>
-                <b>Neighbors:</b> {row['num_adjacent_parcels']}<br>
-                <b>Nearest PT:</b> {row['nearest_any_pt_m']:.0f}m
-            """
-
-            folium.GeoJson(
-                geojson,
-                style_function=lambda x, c=color: {
-                    'fillColor': c,
-                    'color': '#333333',
-                    'weight': 1,
-                    'fillOpacity': 0.7
-                },
-                tooltip=folium.Tooltip(tooltip)
-            ).add_to(m_full)
-        except:
-            pass
-
-    # Add legend
-    legend_html = '''
-    <div style="position: fixed;
-                bottom: 50px; left: 50px; width: 200px; height: 150px;
-                border:2px solid grey; z-index:9999; font-size:14px;
-                background-color:white; padding: 10px;
-                border-radius: 5px;">
-        <b>Suitability Tier</b><br>
-        <i style="background:#d7191c; width:18px; height:18px; display:inline-block;"></i> Tier 1 - Excellent<br>
-        <i style="background:#fdae61; width:18px; height:18px; display:inline-block;"></i> Tier 2 - Very Good<br>
-        <i style="background:#ffffbf; width:18px; height:18px; display:inline-block;"></i> Tier 3 - Good<br>
-        <i style="background:#a6d96a; width:18px; height:18px; display:inline-block;"></i> Tier 4 - Moderate<br>
-        <i style="background:#1a9641; width:18px; height:18px; display:inline-block;"></i> Tier 5 - Low
-    </div>
-    '''
-    m_full.get_root().html.add_child(folium.Element(legend_html))
-
-    # Save to UC Volume
-    volume_path = f"/Volumes/{catalog_name}/{schema_name}/source"
-    import os
-    os.makedirs(f"{volume_path}/visualizations", exist_ok=True)
-    folium_html_path = f"{volume_path}/visualizations/folium_consolidation_candidates_{target_lga.replace(' ', '_')}.html"
-    m_full.save(folium_html_path)
-    print(f"Folium map for {target_lga} saved to: {folium_html_path}")
-    print(f"Total parcels exported: {len(all_candidates):,}")
-else:
-    print("No candidates available for export")
+# NOTE: Visualization moved to Databricks App. Uncomment to run inline for debugging.
+# # Export consolidation candidates for target LGA to Folium HTML (filtered to avoid OOM)
+# import folium
+# import json
+#
+# catalog_name = dbutils.widgets.get("catalog_name")
+# schema_name = dbutils.widgets.get("schema_name")
+#
+# # Use Casey LGA - Metro Melbourne area with good Activity Centre coverage
+# target_lga = "CASEY"
+#
+# # Verify the LGA exists in consolidation candidates
+# lga_check = spark.sql(f"""
+#     SELECT COUNT(*) AS cnt
+#     FROM {catalog_name}.{schema_name}.consolidation_candidates
+#     WHERE lga_name = '{target_lga}'
+# """).collect()[0]['cnt']
+#
+# if lga_check == 0:
+#     print(f"WARNING: {target_lga} not found. Falling back to most common LGA.")
+#     target_lga = "CASEY"  # Default to Casey LGA
+#
+# print(f"Exporting consolidation candidates for LGA: {target_lga} ({lga_check:,} parcels)")
+#
+# # Get consolidation candidates filtered by LGA
+# # Limit to top 2000 parcels to avoid OOM
+# all_candidates_df = spark.sql(f"""
+#     SELECT
+#         parcel_id,
+#         zone_code,
+#         lga_name,
+#         area_sqm,
+#         suitability_score,
+#         suitability_tier,
+#         opportunity_score,
+#         constraint_score,
+#         num_adjacent_parcels,
+#         nearest_any_pt_m,
+#         centroid_lon,
+#         centroid_lat,
+#         ST_AsGeoJSON(ST_Transform(geometry, 4326)) AS geojson
+#     FROM {catalog_name}.{schema_name}.consolidation_candidates
+#     WHERE geometry IS NOT NULL
+#       AND centroid_lon IS NOT NULL
+#       AND lga_name = '{target_lga}'
+#     ORDER BY suitability_score DESC
+#     LIMIT 2000
+# """)
+#
+# all_candidates = all_candidates_df.toPandas()
+# print(f"Retrieved {len(all_candidates)} parcels for full Folium export")
+#
+# if len(all_candidates) > 0:
+#     # Create map centered on parcels
+#     center_lat = all_candidates['centroid_lat'].mean()
+#     center_lon = all_candidates['centroid_lon'].mean()
+#
+#     m_full = folium.Map(
+#         location=[center_lat, center_lon],
+#         zoom_start=14,
+#         tiles='CartoDB positron'
+#     )
+#
+#     # Color scale for suitability tiers
+#     tier_colors = {
+#         'Tier 1 - Excellent': '#d7191c',
+#         'Tier 2 - Very Good': '#fdae61',
+#         'Tier 3 - Good': '#ffffbf',
+#         'Tier 4 - Moderate': '#a6d96a',
+#         'Tier 5 - Low': '#1a9641'
+#     }
+#
+#     # Add ALL parcels
+#     for _, row in all_candidates.iterrows():
+#         try:
+#             geojson = json.loads(row['geojson'])
+#             color = tier_colors.get(row['suitability_tier'], '#808080')
+#
+#             tooltip = f"""
+#                 <b>Parcel:</b> {row['parcel_id']}<br>
+#                 <b>Zone:</b> {row['zone_code']}<br>
+#                 <b>Area:</b> {row['area_sqm']:.0f} sqm<br>
+#                 <b>Score:</b> {row['suitability_score']}<br>
+#                 <b>Tier:</b> {row['suitability_tier']}<br>
+#                 <b>Neighbors:</b> {row['num_adjacent_parcels']}<br>
+#                 <b>Nearest PT:</b> {row['nearest_any_pt_m']:.0f}m
+#             """
+#
+#             folium.GeoJson(
+#                 geojson,
+#                 style_function=lambda x, c=color: {
+#                     'fillColor': c,
+#                     'color': '#333333',
+#                     'weight': 1,
+#                     'fillOpacity': 0.7
+#                 },
+#                 tooltip=folium.Tooltip(tooltip)
+#             ).add_to(m_full)
+#         except:
+#             pass
+#
+#     # Add legend
+#     legend_html = '''
+#     <div style="position: fixed;
+#                 bottom: 50px; left: 50px; width: 200px; height: 150px;
+#                 border:2px solid grey; z-index:9999; font-size:14px;
+#                 background-color:white; padding: 10px;
+#                 border-radius: 5px;">
+#         <b>Suitability Tier</b><br>
+#         <i style="background:#d7191c; width:18px; height:18px; display:inline-block;"></i> Tier 1 - Excellent<br>
+#         <i style="background:#fdae61; width:18px; height:18px; display:inline-block;"></i> Tier 2 - Very Good<br>
+#         <i style="background:#ffffbf; width:18px; height:18px; display:inline-block;"></i> Tier 3 - Good<br>
+#         <i style="background:#a6d96a; width:18px; height:18px; display:inline-block;"></i> Tier 4 - Moderate<br>
+#         <i style="background:#1a9641; width:18px; height:18px; display:inline-block;"></i> Tier 5 - Low
+#     </div>
+#     '''
+#     m_full.get_root().html.add_child(folium.Element(legend_html))
+#
+#     # Save to UC Volume
+#     volume_path = f"/Volumes/{catalog_name}/{schema_name}/source"
+#     import os
+#     os.makedirs(f"{volume_path}/visualizations", exist_ok=True)
+#     folium_html_path = f"{volume_path}/visualizations/folium_consolidation_candidates_{target_lga.replace(' ', '_')}.html"
+#     m_full.save(folium_html_path)
+#     print(f"Folium map for {target_lga} saved to: {folium_html_path}")
+#     print(f"Total parcels exported: {len(all_candidates):,}")
+# else:
+#     print("No candidates available for export")
 
 # COMMAND ----------
 
@@ -1231,232 +1288,237 @@ else:
 # MAGIC ### Kepler.gl: Interactive Exploration of Consolidation Candidates
 # MAGIC
 # MAGIC Use Kepler.gl for more advanced geospatial exploration with filtering and 3D views.
+# MAGIC
+# MAGIC **NOTE: Visualization moved to Databricks App.**
 
 # COMMAND ----------
 
-catalog_name = dbutils.widgets.get("catalog_name")
-schema_name = dbutils.widgets.get("schema_name")
-
-# Get data for Kepler visualization
-kepler_df = spark.sql(f"""
-    SELECT
-        parcel_id,
-        zone_code,
-        lga_name,
-        area_sqm,
-        compactness_index,
-        num_adjacent_parcels,
-        longest_shared_boundary_m,
-        nearest_any_pt_m,
-        opportunity_score,
-        constraint_score,
-        suitability_score,
-        suitability_tier,
-        centroid_lon,
-        centroid_lat,
-        ST_AsGeoJSON(ST_Transform(geometry, 4326)) AS geojson
-    FROM {catalog_name}.{schema_name}.consolidation_candidates
-    WHERE geometry IS NOT NULL
-    ORDER BY suitability_score DESC
-    LIMIT 500
-""")
-
-kepler_data = kepler_df.toPandas()
-print(f"Retrieved {len(kepler_data)} parcels for Kepler visualization")
-
-# COMMAND ----------
-
-from keplergl import KeplerGl
-import json
-
-if len(kepler_data) > 0:
-    # Convert GeoJSON strings to geometry objects for Kepler
-    features = []
-    for _, row in kepler_data.iterrows():
-        try:
-            geom = json.loads(row['geojson'])
-            feature = {
-                "type": "Feature",
-                "geometry": geom,
-                "properties": {
-                    "parcel_id": row['parcel_id'],
-                    "zone_code": row['zone_code'],
-                    "lga_name": row['lga_name'],
-                    "area_sqm": float(row['area_sqm']) if row['area_sqm'] else 0,
-                    "compactness_index": float(row['compactness_index']) if row['compactness_index'] else 0,
-                    "num_adjacent_parcels": int(row['num_adjacent_parcels']) if row['num_adjacent_parcels'] else 0,
-                    "longest_shared_boundary_m": float(row['longest_shared_boundary_m']) if row['longest_shared_boundary_m'] else 0,
-                    "nearest_any_pt_m": float(row['nearest_any_pt_m']) if row['nearest_any_pt_m'] else 0,
-                    "opportunity_score": int(row['opportunity_score']) if row['opportunity_score'] else 0,
-                    "suitability_score": int(row['suitability_score']) if row['suitability_score'] else 0,
-                    "suitability_tier": row['suitability_tier']
-                }
-            }
-            features.append(feature)
-        except:
-            pass
-
-    geojson_collection = {
-        "type": "FeatureCollection",
-        "features": features
-    }
-
-    # Create Kepler map with configuration
-    config = {
-        "version": "v1",
-        "config": {
-            "mapState": {
-                "latitude": kepler_data['centroid_lat'].mean(),
-                "longitude": kepler_data['centroid_lon'].mean(),
-                "zoom": 14
-            },
-            "visState": {
-                "layers": [{
-                    "type": "geojson",
-                    "config": {
-                        "dataId": "consolidation_candidates",
-                        "label": "Consolidation Candidates",
-                        "color": [255, 153, 31],
-                        "columns": {"geojson": "geometry"},
-                        "isVisible": True,
-                        "colorField": {"name": "suitability_score", "type": "integer"},
-                        "colorScale": "quantize"
-                    }
-                }]
-            }
-        }
-    }
-
-    kepler_map = KeplerGl(height=600, config=config)
-    kepler_map.add_data(data=geojson_collection, name="consolidation_candidates")
-
-    # Save Kepler HTML to UC Volume to avoid 10MB output limit
-    volume_path = f"/Volumes/{catalog_name}/{schema_name}/source"
-    kepler_html_path = f"{volume_path}/visualizations/kepler_consolidation.html"
-
-    import os
-    os.makedirs(f"{volume_path}/visualizations", exist_ok=True)
-
-    kepler_map.save_to_html(file_name=kepler_html_path)
-    print(f"Kepler map saved to: {kepler_html_path}")
-    print("Open this file in a browser to view the interactive map.")
-else:
-    print("No data available for Kepler visualization")
+# NOTE: Visualization moved to Databricks App. Uncomment to run inline for debugging.
+# catalog_name = dbutils.widgets.get("catalog_name")
+# schema_name = dbutils.widgets.get("schema_name")
+#
+# # Get data for Kepler visualization
+# kepler_df = spark.sql(f"""
+#     SELECT
+#         parcel_id,
+#         zone_code,
+#         lga_name,
+#         area_sqm,
+#         compactness_index,
+#         num_adjacent_parcels,
+#         longest_shared_boundary_m,
+#         nearest_any_pt_m,
+#         opportunity_score,
+#         constraint_score,
+#         suitability_score,
+#         suitability_tier,
+#         centroid_lon,
+#         centroid_lat,
+#         ST_AsGeoJSON(ST_Transform(geometry, 4326)) AS geojson
+#     FROM {catalog_name}.{schema_name}.consolidation_candidates
+#     WHERE geometry IS NOT NULL
+#     ORDER BY suitability_score DESC
+#     LIMIT 500
+# """)
+#
+# kepler_data = kepler_df.toPandas()
+# print(f"Retrieved {len(kepler_data)} parcels for Kepler visualization")
 
 # COMMAND ----------
 
-# Export consolidation candidates for target LGA to Kepler.gl HTML (filtered to avoid OOM)
-from keplergl import KeplerGl
-import json
+# NOTE: Visualization moved to Databricks App. Uncomment to run inline for debugging.
+# from keplergl import KeplerGl
+# import json
+#
+# if len(kepler_data) > 0:
+#     # Convert GeoJSON strings to geometry objects for Kepler
+#     features = []
+#     for _, row in kepler_data.iterrows():
+#         try:
+#             geom = json.loads(row['geojson'])
+#             feature = {
+#                 "type": "Feature",
+#                 "geometry": geom,
+#                 "properties": {
+#                     "parcel_id": row['parcel_id'],
+#                     "zone_code": row['zone_code'],
+#                     "lga_name": row['lga_name'],
+#                     "area_sqm": float(row['area_sqm']) if row['area_sqm'] else 0,
+#                     "compactness_index": float(row['compactness_index']) if row['compactness_index'] else 0,
+#                     "num_adjacent_parcels": int(row['num_adjacent_parcels']) if row['num_adjacent_parcels'] else 0,
+#                     "longest_shared_boundary_m": float(row['longest_shared_boundary_m']) if row['longest_shared_boundary_m'] else 0,
+#                     "nearest_any_pt_m": float(row['nearest_any_pt_m']) if row['nearest_any_pt_m'] else 0,
+#                     "opportunity_score": int(row['opportunity_score']) if row['opportunity_score'] else 0,
+#                     "suitability_score": int(row['suitability_score']) if row['suitability_score'] else 0,
+#                     "suitability_tier": row['suitability_tier']
+#                 }
+#             }
+#             features.append(feature)
+#         except:
+#             pass
+#
+#     geojson_collection = {
+#         "type": "FeatureCollection",
+#         "features": features
+#     }
+#
+#     # Create Kepler map with configuration
+#     config = {
+#         "version": "v1",
+#         "config": {
+#             "mapState": {
+#                 "latitude": kepler_data['centroid_lat'].mean(),
+#                 "longitude": kepler_data['centroid_lon'].mean(),
+#                 "zoom": 14
+#             },
+#             "visState": {
+#                 "layers": [{
+#                     "type": "geojson",
+#                     "config": {
+#                         "dataId": "consolidation_candidates",
+#                         "label": "Consolidation Candidates",
+#                         "color": [255, 153, 31],
+#                         "columns": {"geojson": "geometry"},
+#                         "isVisible": True,
+#                         "colorField": {"name": "suitability_score", "type": "integer"},
+#                         "colorScale": "quantize"
+#                     }
+#                 }]
+#             }
+#         }
+#     }
+#
+#     kepler_map = KeplerGl(height=600, config=config)
+#     kepler_map.add_data(data=geojson_collection, name="consolidation_candidates")
+#
+#     # Save Kepler HTML to UC Volume to avoid 10MB output limit
+#     volume_path = f"/Volumes/{catalog_name}/{schema_name}/source"
+#     kepler_html_path = f"{volume_path}/visualizations/kepler_consolidation.html"
+#
+#     import os
+#     os.makedirs(f"{volume_path}/visualizations", exist_ok=True)
+#
+#     kepler_map.save_to_html(file_name=kepler_html_path)
+#     print(f"Kepler map saved to: {kepler_html_path}")
+#     print("Open this file in a browser to view the interactive map.")
+# else:
+#     print("No data available for Kepler visualization")
 
-catalog_name = dbutils.widgets.get("catalog_name")
-schema_name = dbutils.widgets.get("schema_name")
+# COMMAND ----------
 
-# Use target_lga from previous cell (or get it again if running independently)
-try:
-    _ = target_lga
-except NameError:
-    target_lga = "CASEY"  # Default to Casey LGA
-
-print(f"Exporting Kepler visualization for LGA: {target_lga}")
-
-# Get data for Kepler visualization filtered by LGA (limit to 2000 to avoid OOM)
-kepler_full_df = spark.sql(f"""
-    SELECT
-        parcel_id,
-        zone_code,
-        lga_name,
-        area_sqm,
-        compactness_index,
-        num_adjacent_parcels,
-        longest_shared_boundary_m,
-        nearest_any_pt_m,
-        opportunity_score,
-        constraint_score,
-        suitability_score,
-        suitability_tier,
-        centroid_lon,
-        centroid_lat,
-        ST_AsGeoJSON(ST_Transform(geometry, 4326)) AS geojson
-    FROM {catalog_name}.{schema_name}.consolidation_candidates
-    WHERE geometry IS NOT NULL
-      AND lga_name = '{target_lga}'
-    ORDER BY suitability_score DESC
-    LIMIT 2000
-""")
-
-kepler_full_data = kepler_full_df.toPandas()
-print(f"Retrieved {len(kepler_full_data)} parcels for full Kepler export")
-
-if len(kepler_full_data) > 0:
-    # Convert GeoJSON strings to geometry objects for Kepler
-    features = []
-    for _, row in kepler_full_data.iterrows():
-        try:
-            geom = json.loads(row['geojson'])
-            feature = {
-                "type": "Feature",
-                "geometry": geom,
-                "properties": {
-                    "parcel_id": row['parcel_id'],
-                    "zone_code": row['zone_code'],
-                    "lga_name": row['lga_name'],
-                    "area_sqm": float(row['area_sqm']) if row['area_sqm'] else 0,
-                    "compactness_index": float(row['compactness_index']) if row['compactness_index'] else 0,
-                    "num_adjacent_parcels": int(row['num_adjacent_parcels']) if row['num_adjacent_parcels'] else 0,
-                    "longest_shared_boundary_m": float(row['longest_shared_boundary_m']) if row['longest_shared_boundary_m'] else 0,
-                    "nearest_any_pt_m": float(row['nearest_any_pt_m']) if row['nearest_any_pt_m'] else 0,
-                    "opportunity_score": int(row['opportunity_score']) if row['opportunity_score'] else 0,
-                    "suitability_score": int(row['suitability_score']) if row['suitability_score'] else 0,
-                    "suitability_tier": row['suitability_tier']
-                }
-            }
-            features.append(feature)
-        except:
-            pass
-
-    geojson_collection = {
-        "type": "FeatureCollection",
-        "features": features
-    }
-
-    # Create Kepler map with configuration
-    config = {
-        "version": "v1",
-        "config": {
-            "mapState": {
-                "latitude": kepler_full_data['centroid_lat'].mean(),
-                "longitude": kepler_full_data['centroid_lon'].mean(),
-                "zoom": 13
-            },
-            "visState": {
-                "layers": [{
-                    "type": "geojson",
-                    "config": {
-                        "dataId": "all_consolidation_candidates",
-                        "label": "All Consolidation Candidates",
-                        "color": [255, 153, 31],
-                        "columns": {"geojson": "geometry"},
-                        "isVisible": True,
-                        "colorField": {"name": "suitability_score", "type": "integer"},
-                        "colorScale": "quantize"
-                    }
-                }]
-            }
-        }
-    }
-
-    kepler_map_full = KeplerGl(height=600, config=config)
-    kepler_map_full.add_data(data=geojson_collection, name="all_consolidation_candidates")
-
-    # Save Kepler HTML to UC Volume
-    volume_path = f"/Volumes/{catalog_name}/{schema_name}/source"
-    kepler_full_html_path = f"{volume_path}/visualizations/kepler_consolidation_{target_lga.replace(' ', '_')}.html"
-    kepler_map_full.save_to_html(file_name=kepler_full_html_path)
-    print(f"Kepler map for {target_lga} saved to: {kepler_full_html_path}")
-    print(f"Total parcels exported: {len(features):,}")
-else:
-    print("No data available for Kepler export")
+# NOTE: Visualization moved to Databricks App. Uncomment to run inline for debugging.
+# # Export consolidation candidates for target LGA to Kepler.gl HTML (filtered to avoid OOM)
+# from keplergl import KeplerGl
+# import json
+#
+# catalog_name = dbutils.widgets.get("catalog_name")
+# schema_name = dbutils.widgets.get("schema_name")
+#
+# # Use target_lga from previous cell (or get it again if running independently)
+# try:
+#     _ = target_lga
+# except NameError:
+#     target_lga = "CASEY"  # Default to Casey LGA
+#
+# print(f"Exporting Kepler visualization for LGA: {target_lga}")
+#
+# # Get data for Kepler visualization filtered by LGA (limit to 2000 to avoid OOM)
+# kepler_full_df = spark.sql(f"""
+#     SELECT
+#         parcel_id,
+#         zone_code,
+#         lga_name,
+#         area_sqm,
+#         compactness_index,
+#         num_adjacent_parcels,
+#         longest_shared_boundary_m,
+#         nearest_any_pt_m,
+#         opportunity_score,
+#         constraint_score,
+#         suitability_score,
+#         suitability_tier,
+#         centroid_lon,
+#         centroid_lat,
+#         ST_AsGeoJSON(ST_Transform(geometry, 4326)) AS geojson
+#     FROM {catalog_name}.{schema_name}.consolidation_candidates
+#     WHERE geometry IS NOT NULL
+#       AND lga_name = '{target_lga}'
+#     ORDER BY suitability_score DESC
+#     LIMIT 2000
+# """)
+#
+# kepler_full_data = kepler_full_df.toPandas()
+# print(f"Retrieved {len(kepler_full_data)} parcels for full Kepler export")
+#
+# if len(kepler_full_data) > 0:
+#     # Convert GeoJSON strings to geometry objects for Kepler
+#     features = []
+#     for _, row in kepler_full_data.iterrows():
+#         try:
+#             geom = json.loads(row['geojson'])
+#             feature = {
+#                 "type": "Feature",
+#                 "geometry": geom,
+#                 "properties": {
+#                     "parcel_id": row['parcel_id'],
+#                     "zone_code": row['zone_code'],
+#                     "lga_name": row['lga_name'],
+#                     "area_sqm": float(row['area_sqm']) if row['area_sqm'] else 0,
+#                     "compactness_index": float(row['compactness_index']) if row['compactness_index'] else 0,
+#                     "num_adjacent_parcels": int(row['num_adjacent_parcels']) if row['num_adjacent_parcels'] else 0,
+#                     "longest_shared_boundary_m": float(row['longest_shared_boundary_m']) if row['longest_shared_boundary_m'] else 0,
+#                     "nearest_any_pt_m": float(row['nearest_any_pt_m']) if row['nearest_any_pt_m'] else 0,
+#                     "opportunity_score": int(row['opportunity_score']) if row['opportunity_score'] else 0,
+#                     "suitability_score": int(row['suitability_score']) if row['suitability_score'] else 0,
+#                     "suitability_tier": row['suitability_tier']
+#                 }
+#             }
+#             features.append(feature)
+#         except:
+#             pass
+#
+#     geojson_collection = {
+#         "type": "FeatureCollection",
+#         "features": features
+#     }
+#
+#     # Create Kepler map with configuration
+#     config = {
+#         "version": "v1",
+#         "config": {
+#             "mapState": {
+#                 "latitude": kepler_full_data['centroid_lat'].mean(),
+#                 "longitude": kepler_full_data['centroid_lon'].mean(),
+#                 "zoom": 13
+#             },
+#             "visState": {
+#                 "layers": [{
+#                     "type": "geojson",
+#                     "config": {
+#                         "dataId": "all_consolidation_candidates",
+#                         "label": "All Consolidation Candidates",
+#                         "color": [255, 153, 31],
+#                         "columns": {"geojson": "geometry"},
+#                         "isVisible": True,
+#                         "colorField": {"name": "suitability_score", "type": "integer"},
+#                         "colorScale": "quantize"
+#                     }
+#                 }]
+#             }
+#         }
+#     }
+#
+#     kepler_map_full = KeplerGl(height=600, config=config)
+#     kepler_map_full.add_data(data=geojson_collection, name="all_consolidation_candidates")
+#
+#     # Save Kepler HTML to UC Volume
+#     volume_path = f"/Volumes/{catalog_name}/{schema_name}/source"
+#     kepler_full_html_path = f"{volume_path}/visualizations/kepler_consolidation_{target_lga.replace(' ', '_')}.html"
+#     kepler_map_full.save_to_html(file_name=kepler_full_html_path)
+#     print(f"Kepler map for {target_lga} saved to: {kepler_full_html_path}")
+#     print(f"Total parcels exported: {len(features):,}")
+# else:
+#     print("No data available for Kepler export")
 
 # COMMAND ----------
 
@@ -1464,164 +1526,168 @@ else:
 # MAGIC ### PyDeck 3D Visualization: Suitability Score Towers
 # MAGIC
 # MAGIC 3D column chart where height represents suitability score.
+# MAGIC
+# MAGIC **NOTE: Visualization moved to Databricks App.**
 
 # COMMAND ----------
 
-import pydeck as pdk
-
-if len(candidates) > 0:
-    # Prepare data for pydeck
-    pydeck_data = candidates.copy()
-    pydeck_data['elevation'] = pydeck_data['suitability_score'] * 3  # Scale for visibility
-
-    # Color based on suitability tier
-    def get_tier_color(tier):
-        colors = {
-            'Tier 1 - Excellent': [215, 25, 28, 200],
-            'Tier 2 - Very Good': [253, 174, 97, 200],
-            'Tier 3 - Good': [255, 255, 191, 200],
-            'Tier 4 - Moderate': [166, 217, 106, 200],
-            'Tier 5 - Low': [26, 150, 65, 200]
-        }
-        return colors.get(tier, [128, 128, 128, 200])
-
-    pydeck_data['color'] = pydeck_data['suitability_tier'].apply(get_tier_color)
-
-    # Create the deck
-    layer = pdk.Layer(
-        "ColumnLayer",
-        data=pydeck_data,
-        get_position=["centroid_lon", "centroid_lat"],
-        get_elevation="elevation",
-        elevation_scale=1,
-        radius=10,
-        get_fill_color="color",
-        pickable=True,
-        auto_highlight=True
-    )
-
-    view_state = pdk.ViewState(
-        latitude=pydeck_data['centroid_lat'].mean(),
-        longitude=pydeck_data['centroid_lon'].mean(),
-        zoom=14,
-        pitch=45,
-        bearing=0
-    )
-
-    deck = pdk.Deck(
-        layers=[layer],
-        initial_view_state=view_state,
-        tooltip={
-            "html": "<b>Parcel:</b> {parcel_id}<br/>"
-                    "<b>Zone:</b> {zone_code}<br/>"
-                    "<b>Score:</b> {suitability_score}<br/>"
-                    "<b>Tier:</b> {suitability_tier}<br/>"
-                    "<b>Area:</b> {area_sqm:.0f} sqm",
-            "style": {"backgroundColor": "steelblue", "color": "white"}
-        }
-    )
-
-    display(deck)
-else:
-    print("No data available for 3D visualization")
+# NOTE: Visualization moved to Databricks App. Uncomment to run inline for debugging.
+# import pydeck as pdk
+#
+# if len(candidates) > 0:
+#     # Prepare data for pydeck
+#     pydeck_data = candidates.copy()
+#     pydeck_data['elevation'] = pydeck_data['suitability_score'] * 3  # Scale for visibility
+#
+#     # Color based on suitability tier
+#     def get_tier_color(tier):
+#         colors = {
+#             'Tier 1 - Excellent': [215, 25, 28, 200],
+#             'Tier 2 - Very Good': [253, 174, 97, 200],
+#             'Tier 3 - Good': [255, 255, 191, 200],
+#             'Tier 4 - Moderate': [166, 217, 106, 200],
+#             'Tier 5 - Low': [26, 150, 65, 200]
+#         }
+#         return colors.get(tier, [128, 128, 128, 200])
+#
+#     pydeck_data['color'] = pydeck_data['suitability_tier'].apply(get_tier_color)
+#
+#     # Create the deck
+#     layer = pdk.Layer(
+#         "ColumnLayer",
+#         data=pydeck_data,
+#         get_position=["centroid_lon", "centroid_lat"],
+#         get_elevation="elevation",
+#         elevation_scale=1,
+#         radius=10,
+#         get_fill_color="color",
+#         pickable=True,
+#         auto_highlight=True
+#     )
+#
+#     view_state = pdk.ViewState(
+#         latitude=pydeck_data['centroid_lat'].mean(),
+#         longitude=pydeck_data['centroid_lon'].mean(),
+#         zoom=14,
+#         pitch=45,
+#         bearing=0
+#     )
+#
+#     deck = pdk.Deck(
+#         layers=[layer],
+#         initial_view_state=view_state,
+#         tooltip={
+#             "html": "<b>Parcel:</b> {parcel_id}<br/>"
+#                     "<b>Zone:</b> {zone_code}<br/>"
+#                     "<b>Score:</b> {suitability_score}<br/>"
+#                     "<b>Tier:</b> {suitability_tier}<br/>"
+#                     "<b>Area:</b> {area_sqm:.0f} sqm",
+#             "style": {"backgroundColor": "steelblue", "color": "white"}
+#         }
+#     )
+#
+#     display(deck)
+# else:
+#     print("No data available for 3D visualization")
 
 # COMMAND ----------
 
-# Export consolidation candidates for target LGA to PyDeck 3D HTML (filtered to avoid OOM)
-import pydeck as pdk
-
-catalog_name = dbutils.widgets.get("catalog_name")
-schema_name = dbutils.widgets.get("schema_name")
-
-# Use target_lga from previous cell (or get it again if running independently)
-try:
-    _ = target_lga
-except NameError:
-    target_lga = "CASEY"  # Default to Casey LGA
-
-print(f"Exporting PyDeck 3D visualization for LGA: {target_lga}")
-
-# Get candidates for 3D visualization filtered by LGA (limit to 2000 to avoid OOM)
-all_pydeck_df = spark.sql(f"""
-    SELECT
-        parcel_id,
-        zone_code,
-        lga_name,
-        area_sqm,
-        suitability_score,
-        suitability_tier,
-        centroid_lon,
-        centroid_lat
-    FROM {catalog_name}.{schema_name}.consolidation_candidates
-    WHERE centroid_lon IS NOT NULL
-      AND centroid_lat IS NOT NULL
-      AND lga_name = '{target_lga}'
-    ORDER BY suitability_score DESC
-    LIMIT 2000
-""")
-
-all_pydeck_data = all_pydeck_df.toPandas()
-print(f"Retrieved {len(all_pydeck_data)} parcels for full PyDeck export")
-
-if len(all_pydeck_data) > 0:
-    # Prepare data for pydeck
-    all_pydeck_data['elevation'] = all_pydeck_data['suitability_score'] * 3  # Scale for visibility
-
-    # Color based on suitability tier
-    def get_tier_color(tier):
-        colors = {
-            'Tier 1 - Excellent': [215, 25, 28, 200],
-            'Tier 2 - Very Good': [253, 174, 97, 200],
-            'Tier 3 - Good': [255, 255, 191, 200],
-            'Tier 4 - Moderate': [166, 217, 106, 200],
-            'Tier 5 - Low': [26, 150, 65, 200]
-        }
-        return colors.get(tier, [128, 128, 128, 200])
-
-    all_pydeck_data['color'] = all_pydeck_data['suitability_tier'].apply(get_tier_color)
-
-    # Create the deck
-    layer = pdk.Layer(
-        "ColumnLayer",
-        data=all_pydeck_data,
-        get_position=["centroid_lon", "centroid_lat"],
-        get_elevation="elevation",
-        elevation_scale=1,
-        radius=10,
-        get_fill_color="color",
-        pickable=True,
-        auto_highlight=True
-    )
-
-    view_state = pdk.ViewState(
-        latitude=all_pydeck_data['centroid_lat'].mean(),
-        longitude=all_pydeck_data['centroid_lon'].mean(),
-        zoom=13,
-        pitch=45,
-        bearing=0
-    )
-
-    deck_full = pdk.Deck(
-        layers=[layer],
-        initial_view_state=view_state,
-        tooltip={
-            "html": "<b>Parcel:</b> {parcel_id}<br/>"
-                    "<b>Zone:</b> {zone_code}<br/>"
-                    "<b>Score:</b> {suitability_score}<br/>"
-                    "<b>Tier:</b> {suitability_tier}<br/>"
-                    "<b>Area:</b> {area_sqm:.0f} sqm",
-            "style": {"backgroundColor": "steelblue", "color": "white"}
-        }
-    )
-
-    # Save to UC Volume
-    volume_path = f"/Volumes/{catalog_name}/{schema_name}/source"
-    pydeck_html_path = f"{volume_path}/visualizations/pydeck_consolidation_3d_{target_lga.replace(' ', '_')}.html"
-    deck_full.to_html(pydeck_html_path)
-    print(f"PyDeck 3D map for {target_lga} saved to: {pydeck_html_path}")
-    print(f"Total parcels exported: {len(all_pydeck_data):,}")
-else:
-    print("No data available for 3D export")
+# NOTE: Visualization moved to Databricks App. Uncomment to run inline for debugging.
+# # Export consolidation candidates for target LGA to PyDeck 3D HTML (filtered to avoid OOM)
+# import pydeck as pdk
+#
+# catalog_name = dbutils.widgets.get("catalog_name")
+# schema_name = dbutils.widgets.get("schema_name")
+#
+# # Use target_lga from previous cell (or get it again if running independently)
+# try:
+#     _ = target_lga
+# except NameError:
+#     target_lga = "CASEY"  # Default to Casey LGA
+#
+# print(f"Exporting PyDeck 3D visualization for LGA: {target_lga}")
+#
+# # Get candidates for 3D visualization filtered by LGA (limit to 2000 to avoid OOM)
+# all_pydeck_df = spark.sql(f"""
+#     SELECT
+#         parcel_id,
+#         zone_code,
+#         lga_name,
+#         area_sqm,
+#         suitability_score,
+#         suitability_tier,
+#         centroid_lon,
+#         centroid_lat
+#     FROM {catalog_name}.{schema_name}.consolidation_candidates
+#     WHERE centroid_lon IS NOT NULL
+#       AND centroid_lat IS NOT NULL
+#       AND lga_name = '{target_lga}'
+#     ORDER BY suitability_score DESC
+#     LIMIT 2000
+# """)
+#
+# all_pydeck_data = all_pydeck_df.toPandas()
+# print(f"Retrieved {len(all_pydeck_data)} parcels for full PyDeck export")
+#
+# if len(all_pydeck_data) > 0:
+#     # Prepare data for pydeck
+#     all_pydeck_data['elevation'] = all_pydeck_data['suitability_score'] * 3  # Scale for visibility
+#
+#     # Color based on suitability tier
+#     def get_tier_color(tier):
+#         colors = {
+#             'Tier 1 - Excellent': [215, 25, 28, 200],
+#             'Tier 2 - Very Good': [253, 174, 97, 200],
+#             'Tier 3 - Good': [255, 255, 191, 200],
+#             'Tier 4 - Moderate': [166, 217, 106, 200],
+#             'Tier 5 - Low': [26, 150, 65, 200]
+#         }
+#         return colors.get(tier, [128, 128, 128, 200])
+#
+#     all_pydeck_data['color'] = all_pydeck_data['suitability_tier'].apply(get_tier_color)
+#
+#     # Create the deck
+#     layer = pdk.Layer(
+#         "ColumnLayer",
+#         data=all_pydeck_data,
+#         get_position=["centroid_lon", "centroid_lat"],
+#         get_elevation="elevation",
+#         elevation_scale=1,
+#         radius=10,
+#         get_fill_color="color",
+#         pickable=True,
+#         auto_highlight=True
+#     )
+#
+#     view_state = pdk.ViewState(
+#         latitude=all_pydeck_data['centroid_lat'].mean(),
+#         longitude=all_pydeck_data['centroid_lon'].mean(),
+#         zoom=13,
+#         pitch=45,
+#         bearing=0
+#     )
+#
+#     deck_full = pdk.Deck(
+#         layers=[layer],
+#         initial_view_state=view_state,
+#         tooltip={
+#             "html": "<b>Parcel:</b> {parcel_id}<br/>"
+#                     "<b>Zone:</b> {zone_code}<br/>"
+#                     "<b>Score:</b> {suitability_score}<br/>"
+#                     "<b>Tier:</b> {suitability_tier}<br/>"
+#                     "<b>Area:</b> {area_sqm:.0f} sqm",
+#             "style": {"backgroundColor": "steelblue", "color": "white"}
+#         }
+#     )
+#
+#     # Save to UC Volume
+#     volume_path = f"/Volumes/{catalog_name}/{schema_name}/source"
+#     pydeck_html_path = f"{volume_path}/visualizations/pydeck_consolidation_3d_{target_lga.replace(' ', '_')}.html"
+#     deck_full.to_html(pydeck_html_path)
+#     print(f"PyDeck 3D map for {target_lga} saved to: {pydeck_html_path}")
+#     print(f"Total parcels exported: {len(all_pydeck_data):,}")
+# else:
+#     print("No data available for 3D export")
 
 # COMMAND ----------
 
@@ -1792,315 +1858,320 @@ def calc_walking_distance_osrm(
 # MAGIC ### Folium Map: Best Consolidation Pairs
 # MAGIC
 # MAGIC Visualize the top consolidation pairs - adjacent parcels with high combined scores.
+# MAGIC
+# MAGIC **NOTE: Visualization moved to Databricks App.**
 
 # COMMAND ----------
 
-catalog_name = dbutils.widgets.get("catalog_name")
-schema_name = dbutils.widgets.get("schema_name")
-
-# Get top consolidation pairs with geometry
-pairs_df = spark.sql(f"""
-    WITH scored_adjacency AS (
-        SELECT
-            a.parcel_1,
-            a.parcel_2,
-            a.shared_boundary_m,
-            s1.suitability_score AS score_1,
-            s2.suitability_score AS score_2,
-            s1.suitability_score + s2.suitability_score AS combined_score,
-            s1.zone_code AS zone_1,
-            s2.zone_code AS zone_2,
-            ST_AsGeoJSON(ST_Transform(s1.geometry, 4326)) AS geojson_1,
-            ST_AsGeoJSON(ST_Transform(s2.geometry, 4326)) AS geojson_2,
-            s1.centroid_lon AS lon_1,
-            s1.centroid_lat AS lat_1,
-            s2.centroid_lon AS lon_2,
-            s2.centroid_lat AS lat_2,
-            ST_AsGeoJSON(ST_Transform(ST_Intersection(ST_Boundary(s1.geometry), ST_Boundary(s2.geometry)), 4326)) AS shared_boundary_geojson
-        FROM {catalog_name}.{schema_name}.parcel_adjacency a
-        JOIN {catalog_name}.{schema_name}.consolidation_candidates s1 ON a.parcel_1 = s1.parcel_id
-        JOIN {catalog_name}.{schema_name}.consolidation_candidates s2 ON a.parcel_2 = s2.parcel_id
-        WHERE a.shared_boundary_m > 0
-    )
-    SELECT *
-    FROM scored_adjacency
-    WHERE zone_1 = zone_2  -- Same zone pairs are best for consolidation
-    ORDER BY combined_score DESC
-    LIMIT 15
-""")
-
-consolidation_pairs = pairs_df.toPandas()
-print(f"Retrieved {len(consolidation_pairs)} consolidation pairs for visualization")
-
-# COMMAND ----------
-
-import folium
-import json
-
-if len(consolidation_pairs) > 0:
-    # Create map
-    center_lat = consolidation_pairs['lat_1'].mean()
-    center_lon = consolidation_pairs['lon_1'].mean()
-
-    m = folium.Map(
-        location=[center_lat, center_lon],
-        zoom_start=16,
-        tiles='CartoDB positron'
-    )
-
-    # Color by combined score
-    def get_pair_color(score):
-        if score >= 150:
-            return '#d7191c'  # Dark red - excellent
-        elif score >= 120:
-            return '#fdae61'  # Orange - very good
-        elif score >= 100:
-            return '#ffffbf'  # Yellow - good
-        else:
-            return '#a6d96a'  # Light green - moderate
-
-    for idx, row in consolidation_pairs.iterrows():
-        color = get_pair_color(row['combined_score'])
-
-        # Add first parcel
-        try:
-            geojson_1 = json.loads(row['geojson_1'])
-            folium.GeoJson(
-                geojson_1,
-                style_function=lambda x, c=color: {
-                    'fillColor': c,
-                    'color': '#333333',
-                    'weight': 2,
-                    'fillOpacity': 0.6
-                },
-                tooltip=f"Parcel 1: {row['parcel_1']}<br>Score: {row['score_1']}<br>Zone: {row['zone_1']}"
-            ).add_to(m)
-        except:
-            pass
-
-        # Add second parcel
-        try:
-            geojson_2 = json.loads(row['geojson_2'])
-            folium.GeoJson(
-                geojson_2,
-                style_function=lambda x, c=color: {
-                    'fillColor': c,
-                    'color': '#333333',
-                    'weight': 2,
-                    'fillOpacity': 0.6
-                },
-                tooltip=f"Parcel 2: {row['parcel_2']}<br>Score: {row['score_2']}<br>Zone: {row['zone_2']}"
-            ).add_to(m)
-        except:
-            pass
-
-        # Add shared boundary highlight
-        try:
-            if row['shared_boundary_geojson']:
-                shared_geom = json.loads(row['shared_boundary_geojson'])
-                folium.GeoJson(
-                    shared_geom,
-                    style_function=lambda x: {
-                        'color': '#0000ff',
-                        'weight': 5,
-                        'opacity': 0.9
-                    },
-                    tooltip=f"Shared: {row['shared_boundary_m']:.1f}m<br>Combined Score: {row['combined_score']}"
-                ).add_to(m)
-        except:
-            pass
-
-        # Add label at midpoint
-        mid_lat = (row['lat_1'] + row['lat_2']) / 2
-        mid_lon = (row['lon_1'] + row['lon_2']) / 2
-        folium.Marker(
-            [mid_lat, mid_lon],
-            icon=folium.DivIcon(
-                html=f'<div style="font-size: 10px; font-weight: bold; color: blue;">#{idx+1}</div>'
-            )
-        ).add_to(m)
-
-    # Add legend
-    legend_html = '''
-    <div style="position: fixed;
-                bottom: 50px; left: 50px; width: 220px; height: 130px;
-                border:2px solid grey; z-index:9999; font-size:14px;
-                background-color:white; padding: 10px;
-                border-radius: 5px;">
-        <b>Consolidation Priority</b><br>
-        <i style="background:#d7191c; width:18px; height:18px; display:inline-block;"></i> Excellent (150+)<br>
-        <i style="background:#fdae61; width:18px; height:18px; display:inline-block;"></i> Very Good (120-149)<br>
-        <i style="background:#ffffbf; width:18px; height:18px; display:inline-block;"></i> Good (100-119)<br>
-        <i style="background:blue; width:18px; height:3px; display:inline-block;"></i> Shared Boundary
-    </div>
-    '''
-    m.get_root().html.add_child(folium.Element(legend_html))
-
-    # Use displayHTML for proper rendering in Databricks
-    displayHTML(m._repr_html_())
-else:
-    print("No consolidation pairs found for visualization")
+# NOTE: Visualization moved to Databricks App. Uncomment to run inline for debugging.
+# catalog_name = dbutils.widgets.get("catalog_name")
+# schema_name = dbutils.widgets.get("schema_name")
+#
+# # Get top consolidation pairs with geometry
+# pairs_df = spark.sql(f"""
+#     WITH scored_adjacency AS (
+#         SELECT
+#             a.parcel_1,
+#             a.parcel_2,
+#             a.shared_boundary_m,
+#             s1.suitability_score AS score_1,
+#             s2.suitability_score AS score_2,
+#             s1.suitability_score + s2.suitability_score AS combined_score,
+#             s1.zone_code AS zone_1,
+#             s2.zone_code AS zone_2,
+#             ST_AsGeoJSON(ST_Transform(s1.geometry, 4326)) AS geojson_1,
+#             ST_AsGeoJSON(ST_Transform(s2.geometry, 4326)) AS geojson_2,
+#             s1.centroid_lon AS lon_1,
+#             s1.centroid_lat AS lat_1,
+#             s2.centroid_lon AS lon_2,
+#             s2.centroid_lat AS lat_2,
+#             ST_AsGeoJSON(ST_Transform(ST_Intersection(ST_Boundary(s1.geometry), ST_Boundary(s2.geometry)), 4326)) AS shared_boundary_geojson
+#         FROM {catalog_name}.{schema_name}.parcel_adjacency a
+#         JOIN {catalog_name}.{schema_name}.consolidation_candidates s1 ON a.parcel_1 = s1.parcel_id
+#         JOIN {catalog_name}.{schema_name}.consolidation_candidates s2 ON a.parcel_2 = s2.parcel_id
+#         WHERE a.shared_boundary_m > 0
+#     )
+#     SELECT *
+#     FROM scored_adjacency
+#     WHERE zone_1 = zone_2  -- Same zone pairs are best for consolidation
+#     ORDER BY combined_score DESC
+#     LIMIT 15
+# """)
+#
+# consolidation_pairs = pairs_df.toPandas()
+# print(f"Retrieved {len(consolidation_pairs)} consolidation pairs for visualization")
 
 # COMMAND ----------
 
-# Export consolidation pairs for target LGA to Folium HTML (filtered to avoid OOM)
-import folium
-import json
+# NOTE: Visualization moved to Databricks App. Uncomment to run inline for debugging.
+# import folium
+# import json
+#
+# if len(consolidation_pairs) > 0:
+#     # Create map
+#     center_lat = consolidation_pairs['lat_1'].mean()
+#     center_lon = consolidation_pairs['lon_1'].mean()
+#
+#     m = folium.Map(
+#         location=[center_lat, center_lon],
+#         zoom_start=16,
+#         tiles='CartoDB positron'
+#     )
+#
+#     # Color by combined score
+#     def get_pair_color(score):
+#         if score >= 150:
+#             return '#d7191c'  # Dark red - excellent
+#         elif score >= 120:
+#             return '#fdae61'  # Orange - very good
+#         elif score >= 100:
+#             return '#ffffbf'  # Yellow - good
+#         else:
+#             return '#a6d96a'  # Light green - moderate
+#
+#     for idx, row in consolidation_pairs.iterrows():
+#         color = get_pair_color(row['combined_score'])
+#
+#         # Add first parcel
+#         try:
+#             geojson_1 = json.loads(row['geojson_1'])
+#             folium.GeoJson(
+#                 geojson_1,
+#                 style_function=lambda x, c=color: {
+#                     'fillColor': c,
+#                     'color': '#333333',
+#                     'weight': 2,
+#                     'fillOpacity': 0.6
+#                 },
+#                 tooltip=f"Parcel 1: {row['parcel_1']}<br>Score: {row['score_1']}<br>Zone: {row['zone_1']}"
+#             ).add_to(m)
+#         except:
+#             pass
+#
+#         # Add second parcel
+#         try:
+#             geojson_2 = json.loads(row['geojson_2'])
+#             folium.GeoJson(
+#                 geojson_2,
+#                 style_function=lambda x, c=color: {
+#                     'fillColor': c,
+#                     'color': '#333333',
+#                     'weight': 2,
+#                     'fillOpacity': 0.6
+#                 },
+#                 tooltip=f"Parcel 2: {row['parcel_2']}<br>Score: {row['score_2']}<br>Zone: {row['zone_2']}"
+#             ).add_to(m)
+#         except:
+#             pass
+#
+#         # Add shared boundary highlight
+#         try:
+#             if row['shared_boundary_geojson']:
+#                 shared_geom = json.loads(row['shared_boundary_geojson'])
+#                 folium.GeoJson(
+#                     shared_geom,
+#                     style_function=lambda x: {
+#                         'color': '#0000ff',
+#                         'weight': 5,
+#                         'opacity': 0.9
+#                     },
+#                     tooltip=f"Shared: {row['shared_boundary_m']:.1f}m<br>Combined Score: {row['combined_score']}"
+#                 ).add_to(m)
+#         except:
+#             pass
+#
+#         # Add label at midpoint
+#         mid_lat = (row['lat_1'] + row['lat_2']) / 2
+#         mid_lon = (row['lon_1'] + row['lon_2']) / 2
+#         folium.Marker(
+#             [mid_lat, mid_lon],
+#             icon=folium.DivIcon(
+#                 html=f'<div style="font-size: 10px; font-weight: bold; color: blue;">#{idx+1}</div>'
+#             )
+#         ).add_to(m)
+#
+#     # Add legend
+#     legend_html = '''
+#     <div style="position: fixed;
+#                 bottom: 50px; left: 50px; width: 220px; height: 130px;
+#                 border:2px solid grey; z-index:9999; font-size:14px;
+#                 background-color:white; padding: 10px;
+#                 border-radius: 5px;">
+#         <b>Consolidation Priority</b><br>
+#         <i style="background:#d7191c; width:18px; height:18px; display:inline-block;"></i> Excellent (150+)<br>
+#         <i style="background:#fdae61; width:18px; height:18px; display:inline-block;"></i> Very Good (120-149)<br>
+#         <i style="background:#ffffbf; width:18px; height:18px; display:inline-block;"></i> Good (100-119)<br>
+#         <i style="background:blue; width:18px; height:3px; display:inline-block;"></i> Shared Boundary
+#     </div>
+#     '''
+#     m.get_root().html.add_child(folium.Element(legend_html))
+#
+#     # Use displayHTML for proper rendering in Databricks
+#     displayHTML(m._repr_html_())
+# else:
+#     print("No consolidation pairs found for visualization")
 
-catalog_name = dbutils.widgets.get("catalog_name")
-schema_name = dbutils.widgets.get("schema_name")
+# COMMAND ----------
 
-# Use target_lga from previous cell (or get it again if running independently)
-try:
-    _ = target_lga
-except NameError:
-    target_lga = "CASEY"  # Default to Casey LGA
-
-print(f"Exporting consolidation pairs for LGA: {target_lga}")
-
-# Get consolidation pairs filtered by LGA (limit to top 500 pairs with high scores to avoid OOM)
-all_pairs_df = spark.sql(f"""
-    WITH scored_adjacency AS (
-        SELECT
-            a.parcel_1,
-            a.parcel_2,
-            a.shared_boundary_m,
-            s1.suitability_score AS score_1,
-            s2.suitability_score AS score_2,
-            s1.suitability_score + s2.suitability_score AS combined_score,
-            s1.zone_code AS zone_1,
-            s2.zone_code AS zone_2,
-            ST_AsGeoJSON(ST_Transform(s1.geometry, 4326)) AS geojson_1,
-            ST_AsGeoJSON(ST_Transform(s2.geometry, 4326)) AS geojson_2,
-            s1.centroid_lon AS lon_1,
-            s1.centroid_lat AS lat_1,
-            s2.centroid_lon AS lon_2,
-            s2.centroid_lat AS lat_2,
-            ST_AsGeoJSON(ST_Transform(ST_Intersection(ST_Boundary(s1.geometry), ST_Boundary(s2.geometry)), 4326)) AS shared_boundary_geojson
-        FROM {catalog_name}.{schema_name}.parcel_adjacency a
-        JOIN {catalog_name}.{schema_name}.consolidation_candidates s1 ON a.parcel_1 = s1.parcel_id
-        JOIN {catalog_name}.{schema_name}.consolidation_candidates s2 ON a.parcel_2 = s2.parcel_id
-        WHERE a.shared_boundary_m > 5
-          AND s1.lga_name = '{target_lga}'
-          AND s1.suitability_score >= 40
-          AND s2.suitability_score >= 40
-    )
-    SELECT *
-    FROM scored_adjacency
-    WHERE zone_1 = zone_2  -- Same zone pairs are best for consolidation
-    ORDER BY combined_score DESC
-    LIMIT 500
-""")
-
-all_consolidation_pairs = all_pairs_df.toPandas()
-print(f"Retrieved {len(all_consolidation_pairs)} consolidation pairs for full export")
-
-if len(all_consolidation_pairs) > 0:
-    # Create map
-    center_lat = all_consolidation_pairs['lat_1'].mean()
-    center_lon = all_consolidation_pairs['lon_1'].mean()
-
-    m_pairs = folium.Map(
-        location=[center_lat, center_lon],
-        zoom_start=14,
-        tiles='CartoDB positron'
-    )
-
-    # Color by combined score
-    def get_pair_color(score):
-        if score >= 150:
-            return '#d7191c'  # Dark red - excellent
-        elif score >= 120:
-            return '#fdae61'  # Orange - very good
-        elif score >= 100:
-            return '#ffffbf'  # Yellow - good
-        else:
-            return '#a6d96a'  # Light green - moderate
-
-    # Track processed parcels to avoid duplicates
-    processed_parcels = set()
-
-    for idx, row in all_consolidation_pairs.iterrows():
-        color = get_pair_color(row['combined_score'])
-
-        # Add first parcel if not already processed
-        if row['parcel_1'] not in processed_parcels:
-            try:
-                geojson_1 = json.loads(row['geojson_1'])
-                folium.GeoJson(
-                    geojson_1,
-                    style_function=lambda x, c=color: {
-                        'fillColor': c,
-                        'color': '#333333',
-                        'weight': 1,
-                        'fillOpacity': 0.6
-                    },
-                    tooltip=f"Parcel: {row['parcel_1']}<br>Score: {row['score_1']}<br>Zone: {row['zone_1']}"
-                ).add_to(m_pairs)
-                processed_parcels.add(row['parcel_1'])
-            except:
-                pass
-
-        # Add second parcel if not already processed
-        if row['parcel_2'] not in processed_parcels:
-            try:
-                geojson_2 = json.loads(row['geojson_2'])
-                folium.GeoJson(
-                    geojson_2,
-                    style_function=lambda x, c=color: {
-                        'fillColor': c,
-                        'color': '#333333',
-                        'weight': 1,
-                        'fillOpacity': 0.6
-                    },
-                    tooltip=f"Parcel: {row['parcel_2']}<br>Score: {row['score_2']}<br>Zone: {row['zone_2']}"
-                ).add_to(m_pairs)
-                processed_parcels.add(row['parcel_2'])
-            except:
-                pass
-
-        # Add shared boundary highlight for top pairs
-        if row['combined_score'] >= 100:
-            try:
-                if row['shared_boundary_geojson']:
-                    shared_geom = json.loads(row['shared_boundary_geojson'])
-                    folium.GeoJson(
-                        shared_geom,
-                        style_function=lambda x: {
-                            'color': '#0000ff',
-                            'weight': 3,
-                            'opacity': 0.8
-                        },
-                        tooltip=f"Shared: {row['shared_boundary_m']:.1f}m<br>Combined Score: {row['combined_score']}"
-                    ).add_to(m_pairs)
-            except:
-                pass
-
-    # Add legend
-    legend_html = '''
-    <div style="position: fixed;
-                bottom: 50px; left: 50px; width: 220px; height: 130px;
-                border:2px solid grey; z-index:9999; font-size:14px;
-                background-color:white; padding: 10px;
-                border-radius: 5px;">
-        <b>Consolidation Priority</b><br>
-        <i style="background:#d7191c; width:18px; height:18px; display:inline-block;"></i> Excellent (150+)<br>
-        <i style="background:#fdae61; width:18px; height:18px; display:inline-block;"></i> Very Good (120-149)<br>
-        <i style="background:#ffffbf; width:18px; height:18px; display:inline-block;"></i> Good (100-119)<br>
-        <i style="background:blue; width:18px; height:3px; display:inline-block;"></i> Shared Boundary
-    </div>
-    '''
-    m_pairs.get_root().html.add_child(folium.Element(legend_html))
-
-    # Save to UC Volume
-    volume_path = f"/Volumes/{catalog_name}/{schema_name}/source"
-    pairs_html_path = f"{volume_path}/visualizations/folium_consolidation_pairs_{target_lga.replace(' ', '_')}.html"
-    m_pairs.save(pairs_html_path)
-    print(f"Consolidation pairs map for {target_lga} saved to: {pairs_html_path}")
-    print(f"Total pairs exported: {len(all_consolidation_pairs):,}")
-    print(f"Unique parcels in visualization: {len(processed_parcels):,}")
-else:
-    print("No consolidation pairs available for export")
+# NOTE: Visualization moved to Databricks App. Uncomment to run inline for debugging.
+# # Export consolidation pairs for target LGA to Folium HTML (filtered to avoid OOM)
+# import folium
+# import json
+#
+# catalog_name = dbutils.widgets.get("catalog_name")
+# schema_name = dbutils.widgets.get("schema_name")
+#
+# # Use target_lga from previous cell (or get it again if running independently)
+# try:
+#     _ = target_lga
+# except NameError:
+#     target_lga = "CASEY"  # Default to Casey LGA
+#
+# print(f"Exporting consolidation pairs for LGA: {target_lga}")
+#
+# # Get consolidation pairs filtered by LGA (limit to top 500 pairs with high scores to avoid OOM)
+# all_pairs_df = spark.sql(f"""
+#     WITH scored_adjacency AS (
+#         SELECT
+#             a.parcel_1,
+#             a.parcel_2,
+#             a.shared_boundary_m,
+#             s1.suitability_score AS score_1,
+#             s2.suitability_score AS score_2,
+#             s1.suitability_score + s2.suitability_score AS combined_score,
+#             s1.zone_code AS zone_1,
+#             s2.zone_code AS zone_2,
+#             ST_AsGeoJSON(ST_Transform(s1.geometry, 4326)) AS geojson_1,
+#             ST_AsGeoJSON(ST_Transform(s2.geometry, 4326)) AS geojson_2,
+#             s1.centroid_lon AS lon_1,
+#             s1.centroid_lat AS lat_1,
+#             s2.centroid_lon AS lon_2,
+#             s2.centroid_lat AS lat_2,
+#             ST_AsGeoJSON(ST_Transform(ST_Intersection(ST_Boundary(s1.geometry), ST_Boundary(s2.geometry)), 4326)) AS shared_boundary_geojson
+#         FROM {catalog_name}.{schema_name}.parcel_adjacency a
+#         JOIN {catalog_name}.{schema_name}.consolidation_candidates s1 ON a.parcel_1 = s1.parcel_id
+#         JOIN {catalog_name}.{schema_name}.consolidation_candidates s2 ON a.parcel_2 = s2.parcel_id
+#         WHERE a.shared_boundary_m > 5
+#           AND s1.lga_name = '{target_lga}'
+#           AND s1.suitability_score >= 40
+#           AND s2.suitability_score >= 40
+#     )
+#     SELECT *
+#     FROM scored_adjacency
+#     WHERE zone_1 = zone_2  -- Same zone pairs are best for consolidation
+#     ORDER BY combined_score DESC
+#     LIMIT 500
+# """)
+#
+# all_consolidation_pairs = all_pairs_df.toPandas()
+# print(f"Retrieved {len(all_consolidation_pairs)} consolidation pairs for full export")
+#
+# if len(all_consolidation_pairs) > 0:
+#     # Create map
+#     center_lat = all_consolidation_pairs['lat_1'].mean()
+#     center_lon = all_consolidation_pairs['lon_1'].mean()
+#
+#     m_pairs = folium.Map(
+#         location=[center_lat, center_lon],
+#         zoom_start=14,
+#         tiles='CartoDB positron'
+#     )
+#
+#     # Color by combined score
+#     def get_pair_color(score):
+#         if score >= 150:
+#             return '#d7191c'  # Dark red - excellent
+#         elif score >= 120:
+#             return '#fdae61'  # Orange - very good
+#         elif score >= 100:
+#             return '#ffffbf'  # Yellow - good
+#         else:
+#             return '#a6d96a'  # Light green - moderate
+#
+#     # Track processed parcels to avoid duplicates
+#     processed_parcels = set()
+#
+#     for idx, row in all_consolidation_pairs.iterrows():
+#         color = get_pair_color(row['combined_score'])
+#
+#         # Add first parcel if not already processed
+#         if row['parcel_1'] not in processed_parcels:
+#             try:
+#                 geojson_1 = json.loads(row['geojson_1'])
+#                 folium.GeoJson(
+#                     geojson_1,
+#                     style_function=lambda x, c=color: {
+#                         'fillColor': c,
+#                         'color': '#333333',
+#                         'weight': 1,
+#                         'fillOpacity': 0.6
+#                     },
+#                     tooltip=f"Parcel: {row['parcel_1']}<br>Score: {row['score_1']}<br>Zone: {row['zone_1']}"
+#                 ).add_to(m_pairs)
+#                 processed_parcels.add(row['parcel_1'])
+#             except:
+#                 pass
+#
+#         # Add second parcel if not already processed
+#         if row['parcel_2'] not in processed_parcels:
+#             try:
+#                 geojson_2 = json.loads(row['geojson_2'])
+#                 folium.GeoJson(
+#                     geojson_2,
+#                     style_function=lambda x, c=color: {
+#                         'fillColor': c,
+#                         'color': '#333333',
+#                         'weight': 1,
+#                         'fillOpacity': 0.6
+#                     },
+#                     tooltip=f"Parcel: {row['parcel_2']}<br>Score: {row['score_2']}<br>Zone: {row['zone_2']}"
+#                 ).add_to(m_pairs)
+#                 processed_parcels.add(row['parcel_2'])
+#             except:
+#                 pass
+#
+#         # Add shared boundary highlight for top pairs
+#         if row['combined_score'] >= 100:
+#             try:
+#                 if row['shared_boundary_geojson']:
+#                     shared_geom = json.loads(row['shared_boundary_geojson'])
+#                     folium.GeoJson(
+#                         shared_geom,
+#                         style_function=lambda x: {
+#                             'color': '#0000ff',
+#                             'weight': 3,
+#                             'opacity': 0.8
+#                         },
+#                         tooltip=f"Shared: {row['shared_boundary_m']:.1f}m<br>Combined Score: {row['combined_score']}"
+#                     ).add_to(m_pairs)
+#             except:
+#                 pass
+#
+#     # Add legend
+#     legend_html = '''
+#     <div style="position: fixed;
+#                 bottom: 50px; left: 50px; width: 220px; height: 130px;
+#                 border:2px solid grey; z-index:9999; font-size:14px;
+#                 background-color:white; padding: 10px;
+#                 border-radius: 5px;">
+#         <b>Consolidation Priority</b><br>
+#         <i style="background:#d7191c; width:18px; height:18px; display:inline-block;"></i> Excellent (150+)<br>
+#         <i style="background:#fdae61; width:18px; height:18px; display:inline-block;"></i> Very Good (120-149)<br>
+#         <i style="background:#ffffbf; width:18px; height:18px; display:inline-block;"></i> Good (100-119)<br>
+#         <i style="background:blue; width:18px; height:3px; display:inline-block;"></i> Shared Boundary
+#     </div>
+#     '''
+#     m_pairs.get_root().html.add_child(folium.Element(legend_html))
+#
+#     # Save to UC Volume
+#     volume_path = f"/Volumes/{catalog_name}/{schema_name}/source"
+#     pairs_html_path = f"{volume_path}/visualizations/folium_consolidation_pairs_{target_lga.replace(' ', '_')}.html"
+#     m_pairs.save(pairs_html_path)
+#     print(f"Consolidation pairs map for {target_lga} saved to: {pairs_html_path}")
+#     print(f"Total pairs exported: {len(all_consolidation_pairs):,}")
+#     print(f"Unique parcels in visualization: {len(processed_parcels):,}")
+# else:
+#     print("No consolidation pairs available for export")
 
 # COMMAND ----------
 
@@ -2136,6 +2207,11 @@ else:
 # MAGIC | Heritage overlay | -50 |
 # MAGIC | Flood overlay | -40 |
 # MAGIC | ESO overlay | -30 |
+# MAGIC | Growth-area LGA | -35 |
+# MAGIC | Very recent subdivision (PS>700k) | -25 |
+# MAGIC | Recent subdivision (PS>500k) | -15 |
+# MAGIC | Mass subdivision (50+ lots) | -20 |
+# MAGIC | Medium subdivision (20-49 lots) | -10 |
 # MAGIC
 # MAGIC ### Output Tables
 # MAGIC - `parcel_pt_proximity` - Distance to PT stops

@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VIC Site Consolidation Viewer</title>
+    <script src="https://unpkg.com/deck.gl@9.0.16/dist.min.js"></script>
+    <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
+    <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet" />
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+        #map { width: 100vw; height: 100vh; }
+        #controls {
+            position: absolute; top: 10px; left: 10px; z-index: 1;
+            background: rgba(255,255,255,0.95); border-radius: 8px;
+            padding: 16px; width: 280px; box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            max-height: 90vh; overflow-y: auto;
+        }
+        h1 { font-size: 16px; margin-bottom: 12px; color: #1a1a2e; }
+        .filter-group { margin-bottom: 10px; }
+        .filter-group label { display: block; font-size: 11px; font-weight: 600; color: #666; margin-bottom: 3px; text-transform: uppercase; }
+        select, input[type="number"] { width: 100%; padding: 6px 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px; }
+        button { width: 100%; padding: 8px; background: #1a73e8; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 600; margin-top: 8px; }
+        button:hover { background: #1557b0; }
+        .stats { margin-top: 12px; padding-top: 12px; border-top: 1px solid #eee; }
+        .stat-row { display: flex; justify-content: space-between; font-size: 12px; padding: 2px 0; }
+        .stat-label { color: #666; }
+        .stat-value { font-weight: 600; }
+        #legend { margin-top: 12px; }
+        .legend-item { display: flex; align-items: center; font-size: 11px; padding: 2px 0; }
+        .legend-dot { width: 14px; height: 14px; border-radius: 2px; margin-right: 6px; flex-shrink: 0; }
+        #tooltip {
+            position: absolute; z-index: 2; pointer-events: none;
+            background: rgba(0,0,0,0.85); color: white; padding: 10px 14px;
+            border-radius: 6px; font-size: 12px; max-width: 300px;
+            display: none; line-height: 1.5;
+        }
+        .checkbox-group { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+        .checkbox-group label { font-size: 12px; text-transform: none; font-weight: normal; }
+        #loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+                   z-index: 3; background: white; padding: 24px 32px; border-radius: 8px;
+                   box-shadow: 0 4px 16px rgba(0,0,0,0.2); font-size: 14px; }
+    </style>
+</head>
+<body>
+    <div id="loading">Loading parcels...</div>
+    <div id="map"></div>
+    <div id="controls">
+        <h1>Site Consolidation Viewer</h1>
+        <div class="filter-group">
+            <label>Suitability Tier</label>
+            <select id="tierFilter">
+                <option value="">All Tiers</option>
+                <option value="Tier 1 - Excellent">Tier 1 - Excellent</option>
+                <option value="Tier 2 - Very Good">Tier 2 - Very Good</option>
+                <option value="Tier 3 - Good">Tier 3 - Good</option>
+                <option value="Tier 4 - Moderate">Tier 4 - Moderate</option>
+                <option value="Tier 5 - Low">Tier 5 - Low</option>
+            </select>
+        </div>
+        <div class="filter-group">
+            <label>LGA</label>
+            <select id="lgaFilter"><option value="">All LGAs</option></select>
+        </div>
+        <div class="filter-group">
+            <label>Min Score</label>
+            <input type="number" id="minScore" value="0" min="0" max="200" />
+        </div>
+        <div class="filter-group">
+            <div class="checkbox-group">
+                <input type="checkbox" id="excludeGrowth" />
+                <label for="excludeGrowth">Exclude growth-area LGAs</label>
+            </div>
+        </div>
+        <button onclick="loadData()">Apply Filters</button>
+
+        <div class="stats" id="statsPanel"></div>
+
+        <div id="legend">
+            <div class="legend-item"><div class="legend-dot" style="background:#d7191c"></div>Tier 1 - Excellent</div>
+            <div class="legend-item"><div class="legend-dot" style="background:#fdae61"></div>Tier 2 - Very Good</div>
+            <div class="legend-item"><div class="legend-dot" style="background:#fee08b"></div>Tier 3 - Good</div>
+            <div class="legend-item"><div class="legend-dot" style="background:#a6d96a"></div>Tier 4 - Moderate</div>
+            <div class="legend-item"><div class="legend-dot" style="background:#1a9641"></div>Tier 5 - Low</div>
+        </div>
+    </div>
+    <div id="tooltip"></div>
+
+    <script>
+        const TIER_COLORS = {
+            'Tier 1 - Excellent': [215, 25, 28],
+            'Tier 2 - Very Good': [253, 174, 97],
+            'Tier 3 - Good': [254, 224, 139],
+            'Tier 4 - Moderate': [166, 217, 106],
+            'Tier 5 - Low': [26, 150, 65],
+        };
+
+        let deckgl = null;
+        let allData = [];
+
+        async function loadData() {
+            const tier = document.getElementById('tierFilter').value;
+            const lga = document.getElementById('lgaFilter').value;
+            const minScore = document.getElementById('minScore').value;
+            const excludeGrowth = document.getElementById('excludeGrowth').checked;
+
+            const params = new URLSearchParams();
+            if (tier) params.set('tier', tier);
+            if (lga) params.set('lga', lga);
+            if (minScore > 0) params.set('min_score', minScore);
+            if (excludeGrowth) params.set('exclude_growth_areas', 'true');
+            params.set('limit', '5000');
+
+            const endpoint = excludeGrowth ? '/api/candidates' : '/api/parcels';
+            const url = `${endpoint}?${params}`;
+
+            try {
+                const resp = await fetch(url);
+                allData = await resp.json();
+                updateMap();
+                updateStats();
+                document.getElementById('loading').style.display = 'none';
+            } catch (err) {
+                console.error('Failed to load data:', err);
+                document.getElementById('loading').textContent = 'Error loading data. Check API connection.';
+            }
+        }
+
+        function updateMap() {
+            const layer = new deck.ScatterplotLayer({
+                id: 'parcels',
+                data: allData,
+                getPosition: d => [d.centroid_lon, d.centroid_lat],
+                getRadius: d => Math.max(5, Math.sqrt(d.area_sqm || 100) * 0.5),
+                getFillColor: d => TIER_COLORS[d.suitability_tier] || [128, 128, 128],
+                getLineColor: [60, 60, 60],
+                lineWidthMinPixels: 0.5,
+                stroked: true,
+                pickable: true,
+                radiusMinPixels: 3,
+                radiusMaxPixels: 30,
+                opacity: 0.8,
+            });
+
+            if (!deckgl) {
+                deckgl = new deck.DeckGL({
+                    container: 'map',
+                    mapStyle: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
+                    initialViewState: {
+                        longitude: allData.length ? allData[0].centroid_lon : 145.0,
+                        latitude: allData.length ? allData[0].centroid_lat : -37.8,
+                        zoom: 13,
+                        pitch: 0,
+                    },
+                    controller: true,
+                    layers: [layer],
+                    getTooltip: ({object}) => {
+                        if (!object) return null;
+                        return {
+                            html: `
+                                <b>${object.parcel_id}</b><br/>
+                                Zone: ${object.zone_code || 'N/A'}<br/>
+                                LGA: ${object.lga_name || 'N/A'}<br/>
+                                Area: ${(object.area_sqm || 0).toFixed(0)} sqm<br/>
+                                Score: <b>${object.suitability_score}</b><br/>
+                                Tier: ${object.suitability_tier}<br/>
+                                Neighbors: ${object.num_adjacent_parcels || 0}<br/>
+                                Nearest PT: ${(object.nearest_any_pt_m || 0).toFixed(0)}m
+                                ${object.is_growth_area_lga ? '<br/><span style="color:#ff9800">Growth Area LGA</span>' : ''}
+                            `,
+                            style: { backgroundColor: 'rgba(0,0,0,0.85)', color: 'white', fontSize: '12px', padding: '10px 14px', borderRadius: '6px' }
+                        };
+                    }
+                });
+            } else {
+                deckgl.setProps({ layers: [layer] });
+            }
+
+            // Auto-fit to data bounds
+            if (allData.length > 0) {
+                const lons = allData.map(d => d.centroid_lon);
+                const lats = allData.map(d => d.centroid_lat);
+                const centerLon = (Math.min(...lons) + Math.max(...lons)) / 2;
+                const centerLat = (Math.min(...lats) + Math.max(...lats)) / 2;
+                const lonSpan = Math.max(...lons) - Math.min(...lons);
+                const latSpan = Math.max(...lats) - Math.min(...lats);
+                const span = Math.max(lonSpan, latSpan);
+                const zoom = span > 0.5 ? 10 : span > 0.1 ? 12 : span > 0.02 ? 14 : 15;
+
+                deckgl.setProps({
+                    initialViewState: {
+                        longitude: centerLon,
+                        latitude: centerLat,
+                        zoom: zoom,
+                        pitch: 0,
+                        transitionDuration: 1000,
+                    }
+                });
+            }
+        }
+
+        function updateStats() {
+            const panel = document.getElementById('statsPanel');
+            const total = allData.length;
+            const tiers = {};
+            allData.forEach(d => {
+                tiers[d.suitability_tier] = (tiers[d.suitability_tier] || 0) + 1;
+            });
+            const avgScore = total > 0
+                ? (allData.reduce((s, d) => s + (d.suitability_score || 0), 0) / total).toFixed(1)
+                : 0;
+            const growthCount = allData.filter(d => d.is_growth_area_lga).length;
+
+            panel.innerHTML = `
+                <div class="stat-row"><span class="stat-label">Parcels shown</span><span class="stat-value">${total.toLocaleString()}</span></div>
+                <div class="stat-row"><span class="stat-label">Avg score</span><span class="stat-value">${avgScore}</span></div>
+                <div class="stat-row"><span class="stat-label">Growth-area</span><span class="stat-value">${growthCount.toLocaleString()}</span></div>
+                ${Object.entries(tiers).sort().map(([k,v]) => `<div class="stat-row"><span class="stat-label">${k.replace('Tier ','T')}</span><span class="stat-value">${v.toLocaleString()}</span></div>`).join('')}
+            `;
+        }
+
+        // Load LGA options and tier stats on startup
+        async function init() {
+            try {
+                const [lgaResp, tierResp] = await Promise.all([
+                    fetch('/api/stats/lgas'),
+                    fetch('/api/stats/tiers'),
+                ]);
+                const lgas = await lgaResp.json();
+                const lgaSelect = document.getElementById('lgaFilter');
+                lgas.forEach(l => {
+                    const opt = document.createElement('option');
+                    opt.value = l.lga_name;
+                    opt.textContent = `${l.lga_name} (${l.parcel_count})${l.growth_area ? ' *' : ''}`;
+                    lgaSelect.appendChild(opt);
+                });
+            } catch (err) {
+                console.warn('Could not load LGA list:', err);
+            }
+            await loadData();
+        }
+
+        init();
+    </script>
+</body>
+</html>

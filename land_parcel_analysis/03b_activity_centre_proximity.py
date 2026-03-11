@@ -437,7 +437,7 @@ else:
 
 # COMMAND ----------
 
-# MAGIC %pip install folium --quiet
+# No additional pip packages needed (viz libraries removed)
 
 # COMMAND ----------
 
@@ -528,151 +528,157 @@ display(ac_df.head(20))
 
 # COMMAND ----------
 
-import folium
-from folium.plugins import MarkerCluster
-
-if len(ac_df) > 0:
-    # Create map centered on activity centres
-    center_lat = ac_df['lat'].mean()
-    center_lon = ac_df['lon'].mean()
-
-    m = folium.Map(
-        location=[center_lat, center_lon],
-        zoom_start=11,
-        tiles='CartoDB positron'
-    )
-
-    # Color by tier
-    tier_colors = {
-        'Metropolitan': 'red',
-        'Major': 'orange',
-        'Neighbourhood': 'green',
-        'Local': 'blue'
-    }
-
-    # Add activity centre markers
-    for _, row in ac_df.iterrows():
-        # Determine color based on tier
-        color = 'gray'
-        for tier_key, tier_color in tier_colors.items():
-            if tier_key.lower() in str(row['centre_tier']).lower():
-                color = tier_color
-                break
-
-        folium.CircleMarker(
-            location=[row['lat'], row['lon']],
-            radius=8 if 'Metropolitan' in str(row['centre_tier']) else 5,
-            color=color,
-            fill=True,
-            fillColor=color,
-            fillOpacity=0.7,
-            tooltip=f"<b>{row['centre_name']}</b><br>Tier: {row['centre_tier']}"
-        ).add_to(m)
-
-    # Add legend
-    legend_html = '''
-    <div style="position: fixed;
-                bottom: 50px; left: 50px; width: 180px;
-                border:2px solid grey; z-index:9999; font-size:14px;
-                background-color:white; padding: 10px;
-                border-radius: 5px;">
-        <b>Activity Centre Tier</b><br>
-        <i style="background:red; width:12px; height:12px; display:inline-block; border-radius:50%;"></i> Metropolitan<br>
-        <i style="background:orange; width:12px; height:12px; display:inline-block; border-radius:50%;"></i> Major<br>
-        <i style="background:green; width:12px; height:12px; display:inline-block; border-radius:50%;"></i> Neighbourhood<br>
-        <i style="background:blue; width:12px; height:12px; display:inline-block; border-radius:50%;"></i> Local
-    </div>
-    '''
-    m.get_root().html.add_child(folium.Element(legend_html))
-
-    displayHTML(m._repr_html_())
-else:
-    print("No activity centres found for visualization")
+# NOTE: Visualization moved to Databricks App. Uncomment to run inline for debugging.
+# import folium
+# from folium.plugins import MarkerCluster
+#
+# if len(ac_df) > 0:
+#     # Create map centered on activity centres
+#     center_lat = ac_df['lat'].mean()
+#     center_lon = ac_df['lon'].mean()
+#
+#     m = folium.Map(
+#         location=[center_lat, center_lon],
+#         zoom_start=11,
+#         tiles='CartoDB positron'
+#     )
+#
+#     # Color by tier
+#     tier_colors = {
+#         'Metropolitan': 'red',
+#         'Major': 'orange',
+#         'Neighbourhood': 'green',
+#         'Local': 'blue'
+#     }
+#
+#     # Add activity centre markers
+#     for _, row in ac_df.iterrows():
+#         # Determine color based on tier
+#         color = 'gray'
+#         for tier_key, tier_color in tier_colors.items():
+#             if tier_key.lower() in str(row['centre_tier']).lower():
+#                 color = tier_color
+#                 break
+#
+#         folium.CircleMarker(
+#             location=[row['lat'], row['lon']],
+#             radius=8 if 'Metropolitan' in str(row['centre_tier']) else 5,
+#             color=color,
+#             fill=True,
+#             fillColor=color,
+#             fillOpacity=0.7,
+#             tooltip=f"<b>{row['centre_name']}</b><br>Tier: {row['centre_tier']}"
+#         ).add_to(m)
+#
+#     # Add legend
+#     legend_html = '''
+#     <div style="position: fixed;
+#                 bottom: 50px; left: 50px; width: 180px;
+#                 border:2px solid grey; z-index:9999; font-size:14px;
+#                 background-color:white; padding: 10px;
+#                 border-radius: 5px;">
+#         <b>Activity Centre Tier</b><br>
+#         <i style="background:red; width:12px; height:12px; display:inline-block; border-radius:50%;"></i> Metropolitan<br>
+#         <i style="background:orange; width:12px; height:12px; display:inline-block; border-radius:50%;"></i> Major<br>
+#         <i style="background:green; width:12px; height:12px; display:inline-block; border-radius:50%;"></i> Neighbourhood<br>
+#         <i style="background:blue; width:12px; height:12px; display:inline-block; border-radius:50%;"></i> Local
+#     </div>
+#     '''
+#     m.get_root().html.add_child(folium.Element(legend_html))
+#
+#     displayHTML(m._repr_html_())
+# else:
+#     print("No activity centres found for visualization")
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ### Export Full Activity Centres Map to UC Volume
+# MAGIC
+# MAGIC **Note:** Visualization has been moved to Databricks App.
 
 # COMMAND ----------
 
-# Export ALL activity centres to Folium HTML
-import folium
-from folium.plugins import MarkerCluster
-
-catalog_name = dbutils.widgets.get("catalog_name")
-schema_name = dbutils.widgets.get("schema_name")
-
-if len(ac_df) > 0:
-    center_lat = ac_df['lat'].mean()
-    center_lon = ac_df['lon'].mean()
-
-    m_ac_full = folium.Map(
-        location=[center_lat, center_lon],
-        zoom_start=10,
-        tiles='CartoDB positron'
-    )
-
-    # Count by tier
-    tier_counts = ac_df['centre_tier'].value_counts().to_dict()
-
-    tier_colors = {
-        'Metropolitan': 'red',
-        'Major': 'orange',
-        'Neighbourhood': 'green',
-        'Local': 'blue'
-    }
-
-    for _, row in ac_df.iterrows():
-        color = 'gray'
-        for tier_key, tier_color in tier_colors.items():
-            if tier_key.lower() in str(row['centre_tier']).lower():
-                color = tier_color
-                break
-
-        folium.CircleMarker(
-            location=[row['lat'], row['lon']],
-            radius=10 if 'Metropolitan' in str(row['centre_tier']) else 6,
-            color=color,
-            fill=True,
-            fillColor=color,
-            fillOpacity=0.7,
-            tooltip=f"<b>{row['centre_name']}</b><br>Tier: {row['centre_tier']}"
-        ).add_to(m_ac_full)
-
-    # Build legend with counts
-    legend_items = []
-    for tier, color in tier_colors.items():
-        count = sum(1 for t in ac_df['centre_tier'] if tier.lower() in str(t).lower())
-        if count > 0:
-            legend_items.append(f'<i style="background:{color}; width:12px; height:12px; display:inline-block; border-radius:50%;"></i> {tier} ({count})<br>')
-
-    legend_html = f'''
-    <div style="position: fixed; bottom: 50px; left: 50px; width: 200px;
-                border:2px solid grey; z-index:9999; font-size:14px;
-                background-color:white; padding: 10px; border-radius: 5px;">
-        <b>Activity Centre Tier (All)</b><br>
-        {''.join(legend_items)}
-        <small>Total: {len(ac_df)}</small>
-    </div>
-    '''
-    m_ac_full.get_root().html.add_child(folium.Element(legend_html))
-
-    # Save to UC Volume
-    volume_path = f"/Volumes/{catalog_name}/{schema_name}/source"
-    ac_html_path = f"{volume_path}/visualizations/folium_activity_centres_full.html"
-
-    import os
-    os.makedirs(f"{volume_path}/visualizations", exist_ok=True)
-
-    m_ac_full.save(ac_html_path)
-    print(f"Full activity centres map saved to: {ac_html_path}")
-    print(f"Total activity centres exported: {len(ac_df)}")
+# NOTE: Visualization moved to Databricks App. Uncomment to run inline for debugging.
+# # Export ALL activity centres to Folium HTML
+# import folium
+# from folium.plugins import MarkerCluster
+#
+# catalog_name = dbutils.widgets.get("catalog_name")
+# schema_name = dbutils.widgets.get("schema_name")
+#
+# if len(ac_df) > 0:
+#     center_lat = ac_df['lat'].mean()
+#     center_lon = ac_df['lon'].mean()
+#
+#     m_ac_full = folium.Map(
+#         location=[center_lat, center_lon],
+#         zoom_start=10,
+#         tiles='CartoDB positron'
+#     )
+#
+#     # Count by tier
+#     tier_counts = ac_df['centre_tier'].value_counts().to_dict()
+#
+#     tier_colors = {
+#         'Metropolitan': 'red',
+#         'Major': 'orange',
+#         'Neighbourhood': 'green',
+#         'Local': 'blue'
+#     }
+#
+#     for _, row in ac_df.iterrows():
+#         color = 'gray'
+#         for tier_key, tier_color in tier_colors.items():
+#             if tier_key.lower() in str(row['centre_tier']).lower():
+#                 color = tier_color
+#                 break
+#
+#         folium.CircleMarker(
+#             location=[row['lat'], row['lon']],
+#             radius=10 if 'Metropolitan' in str(row['centre_tier']) else 6,
+#             color=color,
+#             fill=True,
+#             fillColor=color,
+#             fillOpacity=0.7,
+#             tooltip=f"<b>{row['centre_name']}</b><br>Tier: {row['centre_tier']}"
+#         ).add_to(m_ac_full)
+#
+#     # Build legend with counts
+#     legend_items = []
+#     for tier, color in tier_colors.items():
+#         count = sum(1 for t in ac_df['centre_tier'] if tier.lower() in str(t).lower())
+#         if count > 0:
+#             legend_items.append(f'<i style="background:{color}; width:12px; height:12px; display:inline-block; border-radius:50%;"></i> {tier} ({count})<br>')
+#
+#     legend_html = f'''
+#     <div style="position: fixed; bottom: 50px; left: 50px; width: 200px;
+#                 border:2px solid grey; z-index:9999; font-size:14px;
+#                 background-color:white; padding: 10px; border-radius: 5px;">
+#         <b>Activity Centre Tier (All)</b><br>
+#         {''.join(legend_items)}
+#         <small>Total: {len(ac_df)}</small>
+#     </div>
+#     '''
+#     m_ac_full.get_root().html.add_child(folium.Element(legend_html))
+#
+#     # Save to UC Volume
+#     volume_path = f"/Volumes/{catalog_name}/{schema_name}/source"
+#     ac_html_path = f"{volume_path}/visualizations/folium_activity_centres_full.html"
+#
+#     import os
+#     os.makedirs(f"{volume_path}/visualizations", exist_ok=True)
+#
+#     m_ac_full.save(ac_html_path)
+#     print(f"Full activity centres map saved to: {ac_html_path}")
+#     print(f"Total activity centres exported: {len(ac_df)}")
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ### Parcels Colored by Distance to Activity Centre
+# MAGIC
+# MAGIC **Note:** Visualization has been moved to Databricks App.
 
 # COMMAND ----------
 
@@ -704,179 +710,183 @@ print(f"Retrieved {len(parcels_with_ac)} parcels with activity centre proximity"
 
 # COMMAND ----------
 
-import folium
-import json
-
-if len(parcels_with_ac) > 0:
-    center_lat = parcels_with_ac['centroid_lat'].mean()
-    center_lon = parcels_with_ac['centroid_lon'].mean()
-
-    m = folium.Map(
-        location=[center_lat, center_lon],
-        zoom_start=14,
-        tiles='CartoDB positron'
-    )
-
-    # Color by distance
-    def get_distance_color(distance):
-        if distance <= 400:
-            return '#1a9850'  # Dark green - excellent
-        elif distance <= 800:
-            return '#91cf60'  # Light green - good
-        elif distance <= 1200:
-            return '#fee08b'  # Yellow - moderate
-        elif distance <= 1600:
-            return '#fc8d59'  # Orange - fair
-        else:
-            return '#d73027'  # Red - poor
-
-    # Add parcels
-    for _, row in parcels_with_ac.iterrows():
-        try:
-            geojson = json.loads(row['geojson'])
-            color = get_distance_color(row['nearest_any_ac_m'])
-
-            tooltip = f"""
-                <b>Parcel:</b> {row['parcel_id']}<br>
-                <b>Zone:</b> {row['zone_code']}<br>
-                <b>Distance to AC:</b> {row['nearest_any_ac_m']:.0f}m<br>
-                <b>Nearest MAC:</b> {row['nearest_mac_name'] or 'N/A'}<br>
-                <b>Within 800m:</b> {'Yes' if row['within_800m_ac'] else 'No'}
-            """
-
-            folium.GeoJson(
-                geojson,
-                style_function=lambda x, c=color: {
-                    'fillColor': c,
-                    'color': c,
-                    'weight': 1,
-                    'fillOpacity': 0.6
-                },
-                tooltip=folium.Tooltip(tooltip)
-            ).add_to(m)
-        except:
-            pass
-
-    # Add legend
-    legend_html = '''
-    <div style="position: fixed;
-                bottom: 50px; left: 50px; width: 200px;
-                border:2px solid grey; z-index:9999; font-size:14px;
-                background-color:white; padding: 10px;
-                border-radius: 5px;">
-        <b>Distance to Activity Centre</b><br>
-        <i style="background:#1a9850; width:18px; height:12px; display:inline-block;"></i> 0-400m (Excellent)<br>
-        <i style="background:#91cf60; width:18px; height:12px; display:inline-block;"></i> 400-800m (Good)<br>
-        <i style="background:#fee08b; width:18px; height:12px; display:inline-block;"></i> 800-1200m (Moderate)<br>
-        <i style="background:#fc8d59; width:18px; height:12px; display:inline-block;"></i> 1200-1600m (Fair)<br>
-        <i style="background:#d73027; width:18px; height:12px; display:inline-block;"></i> >1600m (Poor)
-    </div>
-    '''
-    m.get_root().html.add_child(folium.Element(legend_html))
-
-    displayHTML(m._repr_html_())
-else:
-    print("No parcels found for visualization")
+# NOTE: Visualization moved to Databricks App. Uncomment to run inline for debugging.
+# import folium
+# import json
+#
+# if len(parcels_with_ac) > 0:
+#     center_lat = parcels_with_ac['centroid_lat'].mean()
+#     center_lon = parcels_with_ac['centroid_lon'].mean()
+#
+#     m = folium.Map(
+#         location=[center_lat, center_lon],
+#         zoom_start=14,
+#         tiles='CartoDB positron'
+#     )
+#
+#     # Color by distance
+#     def get_distance_color(distance):
+#         if distance <= 400:
+#             return '#1a9850'  # Dark green - excellent
+#         elif distance <= 800:
+#             return '#91cf60'  # Light green - good
+#         elif distance <= 1200:
+#             return '#fee08b'  # Yellow - moderate
+#         elif distance <= 1600:
+#             return '#fc8d59'  # Orange - fair
+#         else:
+#             return '#d73027'  # Red - poor
+#
+#     # Add parcels
+#     for _, row in parcels_with_ac.iterrows():
+#         try:
+#             geojson = json.loads(row['geojson'])
+#             color = get_distance_color(row['nearest_any_ac_m'])
+#
+#             tooltip = f"""
+#                 <b>Parcel:</b> {row['parcel_id']}<br>
+#                 <b>Zone:</b> {row['zone_code']}<br>
+#                 <b>Distance to AC:</b> {row['nearest_any_ac_m']:.0f}m<br>
+#                 <b>Nearest MAC:</b> {row['nearest_mac_name'] or 'N/A'}<br>
+#                 <b>Within 800m:</b> {'Yes' if row['within_800m_ac'] else 'No'}
+#             """
+#
+#             folium.GeoJson(
+#                 geojson,
+#                 style_function=lambda x, c=color: {
+#                     'fillColor': c,
+#                     'color': c,
+#                     'weight': 1,
+#                     'fillOpacity': 0.6
+#                 },
+#                 tooltip=folium.Tooltip(tooltip)
+#             ).add_to(m)
+#         except:
+#             pass
+#
+#     # Add legend
+#     legend_html = '''
+#     <div style="position: fixed;
+#                 bottom: 50px; left: 50px; width: 200px;
+#                 border:2px solid grey; z-index:9999; font-size:14px;
+#                 background-color:white; padding: 10px;
+#                 border-radius: 5px;">
+#         <b>Distance to Activity Centre</b><br>
+#         <i style="background:#1a9850; width:18px; height:12px; display:inline-block;"></i> 0-400m (Excellent)<br>
+#         <i style="background:#91cf60; width:18px; height:12px; display:inline-block;"></i> 400-800m (Good)<br>
+#         <i style="background:#fee08b; width:18px; height:12px; display:inline-block;"></i> 800-1200m (Moderate)<br>
+#         <i style="background:#fc8d59; width:18px; height:12px; display:inline-block;"></i> 1200-1600m (Fair)<br>
+#         <i style="background:#d73027; width:18px; height:12px; display:inline-block;"></i> >1600m (Poor)
+#     </div>
+#     '''
+#     m.get_root().html.add_child(folium.Element(legend_html))
+#
+#     displayHTML(m._repr_html_())
+# else:
+#     print("No parcels found for visualization")
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ### Export Full Parcels by AC Distance Map to UC Volume
+# MAGIC
+# MAGIC **Note:** Visualization has been moved to Databricks App.
 
 # COMMAND ----------
 
-# Export ALL parcels with activity centre proximity to Folium HTML
-import folium
-import json
-
-catalog_name = dbutils.widgets.get("catalog_name")
-schema_name = dbutils.widgets.get("schema_name")
-
-# Get ALL parcels with proximity data (no limit)
-all_parcels_ac = spark.sql(f"""
-    SELECT
-        e.parcel_id,
-        e.zone_code,
-        e.centroid_lon,
-        e.centroid_lat,
-        ST_AsGeoJSON(ST_Transform(e.geometry, 4326)) AS geojson,
-        ac.nearest_any_ac_m,
-        ac.nearest_mac_name,
-        ac.within_800m_ac,
-        ac.within_800m_mac
-    FROM {catalog_name}.{schema_name}.parcel_edge_topology e
-    JOIN {catalog_name}.{schema_name}.parcel_activity_centre_proximity ac
-        ON e.parcel_id = ac.parcel_id
-    WHERE e.geometry IS NOT NULL
-      AND e.centroid_lon IS NOT NULL
-""").toPandas()
-
-print(f"Loaded {len(all_parcels_ac)} parcels for full AC proximity export")
-
-if len(all_parcels_ac) > 0:
-    center_lat = all_parcels_ac['centroid_lat'].mean()
-    center_lon = all_parcels_ac['centroid_lon'].mean()
-
-    m_ac_parcels_full = folium.Map(
-        location=[center_lat, center_lon],
-        zoom_start=13,
-        tiles='CartoDB positron'
-    )
-
-    # Count by distance band
-    excellent_count = (all_parcels_ac['nearest_any_ac_m'] <= 400).sum()
-    good_count = ((all_parcels_ac['nearest_any_ac_m'] > 400) & (all_parcels_ac['nearest_any_ac_m'] <= 800)).sum()
-    moderate_count = ((all_parcels_ac['nearest_any_ac_m'] > 800) & (all_parcels_ac['nearest_any_ac_m'] <= 1200)).sum()
-    fair_count = ((all_parcels_ac['nearest_any_ac_m'] > 1200) & (all_parcels_ac['nearest_any_ac_m'] <= 1600)).sum()
-    poor_count = (all_parcels_ac['nearest_any_ac_m'] > 1600).sum()
-
-    def get_distance_color(distance):
-        if distance <= 400:
-            return '#1a9850'
-        elif distance <= 800:
-            return '#91cf60'
-        elif distance <= 1200:
-            return '#fee08b'
-        elif distance <= 1600:
-            return '#fc8d59'
-        else:
-            return '#d73027'
-
-    for _, row in all_parcels_ac.iterrows():
-        try:
-            geojson = json.loads(row['geojson'])
-            color = get_distance_color(row['nearest_any_ac_m'])
-
-            folium.GeoJson(
-                geojson,
-                style_function=lambda x, c=color: {'fillColor': c, 'color': c, 'weight': 0.5, 'fillOpacity': 0.6},
-                tooltip=f"Parcel: {row['parcel_id']}<br>Zone: {row['zone_code']}<br>Distance: {row['nearest_any_ac_m']:.0f}m"
-            ).add_to(m_ac_parcels_full)
-        except:
-            pass
-
-    legend_html = f'''
-    <div style="position: fixed; bottom: 50px; left: 50px; width: 220px;
-                border:2px solid grey; z-index:9999; font-size:14px;
-                background-color:white; padding: 10px; border-radius: 5px;">
-        <b>Distance to Activity Centre (Full)</b><br>
-        <i style="background:#1a9850; width:18px; height:12px; display:inline-block;"></i> 0-400m ({excellent_count:,})<br>
-        <i style="background:#91cf60; width:18px; height:12px; display:inline-block;"></i> 400-800m ({good_count:,})<br>
-        <i style="background:#fee08b; width:18px; height:12px; display:inline-block;"></i> 800-1200m ({moderate_count:,})<br>
-        <i style="background:#fc8d59; width:18px; height:12px; display:inline-block;"></i> 1200-1600m ({fair_count:,})<br>
-        <i style="background:#d73027; width:18px; height:12px; display:inline-block;"></i> >1600m ({poor_count:,})<br>
-        <small>Total: {len(all_parcels_ac):,}</small>
-    </div>
-    '''
-    m_ac_parcels_full.get_root().html.add_child(folium.Element(legend_html))
-
-    # Save to UC Volume
-    volume_path = f"/Volumes/{catalog_name}/{schema_name}/source"
-    ac_parcels_html_path = f"{volume_path}/visualizations/folium_parcels_ac_distance_full.html"
-
-    m_ac_parcels_full.save(ac_parcels_html_path)
-    print(f"Full parcels AC distance map saved to: {ac_parcels_html_path}")
-    print(f"Breakdown: Excellent={excellent_count}, Good={good_count}, Moderate={moderate_count}, Fair={fair_count}, Poor={poor_count}")
+# NOTE: Visualization moved to Databricks App. Uncomment to run inline for debugging.
+# # Export ALL parcels with activity centre proximity to Folium HTML
+# import folium
+# import json
+#
+# catalog_name = dbutils.widgets.get("catalog_name")
+# schema_name = dbutils.widgets.get("schema_name")
+#
+# # Get ALL parcels with proximity data (no limit)
+# all_parcels_ac = spark.sql(f"""
+#     SELECT
+#         e.parcel_id,
+#         e.zone_code,
+#         e.centroid_lon,
+#         e.centroid_lat,
+#         ST_AsGeoJSON(ST_Transform(e.geometry, 4326)) AS geojson,
+#         ac.nearest_any_ac_m,
+#         ac.nearest_mac_name,
+#         ac.within_800m_ac,
+#         ac.within_800m_mac
+#     FROM {catalog_name}.{schema_name}.parcel_edge_topology e
+#     JOIN {catalog_name}.{schema_name}.parcel_activity_centre_proximity ac
+#         ON e.parcel_id = ac.parcel_id
+#     WHERE e.geometry IS NOT NULL
+#       AND e.centroid_lon IS NOT NULL
+# """).toPandas()
+#
+# print(f"Loaded {len(all_parcels_ac)} parcels for full AC proximity export")
+#
+# if len(all_parcels_ac) > 0:
+#     center_lat = all_parcels_ac['centroid_lat'].mean()
+#     center_lon = all_parcels_ac['centroid_lon'].mean()
+#
+#     m_ac_parcels_full = folium.Map(
+#         location=[center_lat, center_lon],
+#         zoom_start=13,
+#         tiles='CartoDB positron'
+#     )
+#
+#     # Count by distance band
+#     excellent_count = (all_parcels_ac['nearest_any_ac_m'] <= 400).sum()
+#     good_count = ((all_parcels_ac['nearest_any_ac_m'] > 400) & (all_parcels_ac['nearest_any_ac_m'] <= 800)).sum()
+#     moderate_count = ((all_parcels_ac['nearest_any_ac_m'] > 800) & (all_parcels_ac['nearest_any_ac_m'] <= 1200)).sum()
+#     fair_count = ((all_parcels_ac['nearest_any_ac_m'] > 1200) & (all_parcels_ac['nearest_any_ac_m'] <= 1600)).sum()
+#     poor_count = (all_parcels_ac['nearest_any_ac_m'] > 1600).sum()
+#
+#     def get_distance_color(distance):
+#         if distance <= 400:
+#             return '#1a9850'
+#         elif distance <= 800:
+#             return '#91cf60'
+#         elif distance <= 1200:
+#             return '#fee08b'
+#         elif distance <= 1600:
+#             return '#fc8d59'
+#         else:
+#             return '#d73027'
+#
+#     for _, row in all_parcels_ac.iterrows():
+#         try:
+#             geojson = json.loads(row['geojson'])
+#             color = get_distance_color(row['nearest_any_ac_m'])
+#
+#             folium.GeoJson(
+#                 geojson,
+#                 style_function=lambda x, c=color: {'fillColor': c, 'color': c, 'weight': 0.5, 'fillOpacity': 0.6},
+#                 tooltip=f"Parcel: {row['parcel_id']}<br>Zone: {row['zone_code']}<br>Distance: {row['nearest_any_ac_m']:.0f}m"
+#             ).add_to(m_ac_parcels_full)
+#         except:
+#             pass
+#
+#     legend_html = f'''
+#     <div style="position: fixed; bottom: 50px; left: 50px; width: 220px;
+#                 border:2px solid grey; z-index:9999; font-size:14px;
+#                 background-color:white; padding: 10px; border-radius: 5px;">
+#         <b>Distance to Activity Centre (Full)</b><br>
+#         <i style="background:#1a9850; width:18px; height:12px; display:inline-block;"></i> 0-400m ({excellent_count:,})<br>
+#         <i style="background:#91cf60; width:18px; height:12px; display:inline-block;"></i> 400-800m ({good_count:,})<br>
+#         <i style="background:#fee08b; width:18px; height:12px; display:inline-block;"></i> 800-1200m ({moderate_count:,})<br>
+#         <i style="background:#fc8d59; width:18px; height:12px; display:inline-block;"></i> 1200-1600m ({fair_count:,})<br>
+#         <i style="background:#d73027; width:18px; height:12px; display:inline-block;"></i> >1600m ({poor_count:,})<br>
+#         <small>Total: {len(all_parcels_ac):,}</small>
+#     </div>
+#     '''
+#     m_ac_parcels_full.get_root().html.add_child(folium.Element(legend_html))
+#
+#     # Save to UC Volume
+#     volume_path = f"/Volumes/{catalog_name}/{schema_name}/source"
+#     ac_parcels_html_path = f"{volume_path}/visualizations/folium_parcels_ac_distance_full.html"
+#
+#     m_ac_parcels_full.save(ac_parcels_html_path)
+#     print(f"Full parcels AC distance map saved to: {ac_parcels_html_path}")
+#     print(f"Breakdown: Excellent={excellent_count}, Good={good_count}, Moderate={moderate_count}, Fair={fair_count}, Poor={poor_count}")
 
 # COMMAND ----------
 

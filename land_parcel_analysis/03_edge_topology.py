@@ -22,7 +22,7 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install folium pydeck --quiet
+# No additional pip packages needed (viz libraries removed)
 
 # COMMAND ----------
 
@@ -592,203 +592,209 @@ print(f"Retrieved {len(adjacency_pairs)} adjacency pairs for visualization")
 # MAGIC ### Folium Map: Adjacent Parcels with Shared Boundaries
 # MAGIC
 # MAGIC This map shows pairs of adjacent parcels with their shared boundaries highlighted in red.
+# MAGIC
+# MAGIC **Note:** Visualization moved to Databricks App.
 
 # COMMAND ----------
 
-import folium
-import json
-
-# Create map centered on the first pair
-if len(adjacency_pairs) > 0:
-    center_lat = adjacency_pairs['centroid_lat_1'].mean()
-    center_lon = adjacency_pairs['centroid_lon_1'].mean()
-
-    # Create the map
-    m = folium.Map(
-        location=[center_lat, center_lon],
-        zoom_start=16,
-        tiles='CartoDB positron'
-    )
-
-    # Color palette for parcel pairs
-    pair_colors = ['#3388ff', '#33ff88', '#ff8833', '#8833ff', '#ff3388', '#88ff33']
-
-    for idx, row in adjacency_pairs.iterrows():
-        color = pair_colors[idx % len(pair_colors)]
-
-        # Add first parcel
-        try:
-            geojson_1 = json.loads(row['geojson_1'])
-            folium.GeoJson(
-                geojson_1,
-                style_function=lambda x, c=color: {
-                    'fillColor': c,
-                    'color': c,
-                    'weight': 2,
-                    'fillOpacity': 0.3
-                },
-                tooltip=f"Parcel 1: {row['parcel_1']}<br>Zone: {row['zone_1']}"
-            ).add_to(m)
-        except:
-            pass
-
-        # Add second parcel
-        try:
-            geojson_2 = json.loads(row['geojson_2'])
-            folium.GeoJson(
-                geojson_2,
-                style_function=lambda x, c=color: {
-                    'fillColor': c,
-                    'color': c,
-                    'weight': 2,
-                    'fillOpacity': 0.3
-                },
-                tooltip=f"Parcel 2: {row['parcel_2']}<br>Zone: {row['zone_2']}"
-            ).add_to(m)
-        except:
-            pass
-
-        # Add shared boundary line (highlighted in red)
-        try:
-            if row['shared_boundary_geojson']:
-                shared_geom = json.loads(row['shared_boundary_geojson'])
-                folium.GeoJson(
-                    shared_geom,
-                    style_function=lambda x: {
-                        'color': 'red',
-                        'weight': 4,
-                        'opacity': 0.8
-                    },
-                    tooltip=f"Shared Boundary: {row['shared_boundary_m']}m"
-                ).add_to(m)
-        except:
-            pass
-
-    # Add legend
-    legend_html = '''
-    <div style="position: fixed;
-                bottom: 50px; left: 50px; width: 200px; height: 90px;
-                border:2px solid grey; z-index:9999; font-size:14px;
-                background-color:white; padding: 10px;
-                border-radius: 5px;">
-        <b>Edge Topology Legend</b><br>
-        <i style="background:rgba(51,136,255,0.3); width:18px; height:18px; display:inline-block;"></i> Parcel Pairs<br>
-        <i style="background:red; width:18px; height:3px; display:inline-block;"></i> Shared Boundary
-    </div>
-    '''
-    m.get_root().html.add_child(folium.Element(legend_html))
-
-    # Use displayHTML for proper rendering in Databricks
-    displayHTML(m._repr_html_())
-else:
-    print("No adjacency pairs found for visualization")
+# NOTE: Visualization moved to Databricks App. Uncomment to run inline for debugging.
+# import folium
+# import json
+#
+# # Create map centered on the first pair
+# if len(adjacency_pairs) > 0:
+#     center_lat = adjacency_pairs['centroid_lat_1'].mean()
+#     center_lon = adjacency_pairs['centroid_lon_1'].mean()
+#
+#     # Create the map
+#     m = folium.Map(
+#         location=[center_lat, center_lon],
+#         zoom_start=16,
+#         tiles='CartoDB positron'
+#     )
+#
+#     # Color palette for parcel pairs
+#     pair_colors = ['#3388ff', '#33ff88', '#ff8833', '#8833ff', '#ff3388', '#88ff33']
+#
+#     for idx, row in adjacency_pairs.iterrows():
+#         color = pair_colors[idx % len(pair_colors)]
+#
+#         # Add first parcel
+#         try:
+#             geojson_1 = json.loads(row['geojson_1'])
+#             folium.GeoJson(
+#                 geojson_1,
+#                 style_function=lambda x, c=color: {
+#                     'fillColor': c,
+#                     'color': c,
+#                     'weight': 2,
+#                     'fillOpacity': 0.3
+#                 },
+#                 tooltip=f"Parcel 1: {row['parcel_1']}<br>Zone: {row['zone_1']}"
+#             ).add_to(m)
+#         except:
+#             pass
+#
+#         # Add second parcel
+#         try:
+#             geojson_2 = json.loads(row['geojson_2'])
+#             folium.GeoJson(
+#                 geojson_2,
+#                 style_function=lambda x, c=color: {
+#                     'fillColor': c,
+#                     'color': c,
+#                     'weight': 2,
+#                     'fillOpacity': 0.3
+#                 },
+#                 tooltip=f"Parcel 2: {row['parcel_2']}<br>Zone: {row['zone_2']}"
+#             ).add_to(m)
+#         except:
+#             pass
+#
+#         # Add shared boundary line (highlighted in red)
+#         try:
+#             if row['shared_boundary_geojson']:
+#                 shared_geom = json.loads(row['shared_boundary_geojson'])
+#                 folium.GeoJson(
+#                     shared_geom,
+#                     style_function=lambda x: {
+#                         'color': 'red',
+#                         'weight': 4,
+#                         'opacity': 0.8
+#                     },
+#                     tooltip=f"Shared Boundary: {row['shared_boundary_m']}m"
+#                 ).add_to(m)
+#         except:
+#             pass
+#
+#     # Add legend
+#     legend_html = '''
+#     <div style="position: fixed;
+#                 bottom: 50px; left: 50px; width: 200px; height: 90px;
+#                 border:2px solid grey; z-index:9999; font-size:14px;
+#                 background-color:white; padding: 10px;
+#                 border-radius: 5px;">
+#         <b>Edge Topology Legend</b><br>
+#         <i style="background:rgba(51,136,255,0.3); width:18px; height:18px; display:inline-block;"></i> Parcel Pairs<br>
+#         <i style="background:red; width:18px; height:3px; display:inline-block;"></i> Shared Boundary
+#     </div>
+#     '''
+#     m.get_root().html.add_child(folium.Element(legend_html))
+#
+#     # Use displayHTML for proper rendering in Databricks
+#     displayHTML(m._repr_html_())
+# else:
+#     print("No adjacency pairs found for visualization")
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ### Export Full Adjacency Pairs Map to UC Volume
+# MAGIC
+# MAGIC **Note:** Visualization moved to Databricks App.
 
 # COMMAND ----------
 
-# Export adjacency pairs for target LGA to Folium HTML (filtered to avoid OOM)
-import folium
-import json
-
-catalog_name = dbutils.widgets.get("catalog_name")
-schema_name = dbutils.widgets.get("schema_name")
-
-# Use same sample_lga as earlier in the notebook
-# Get adjacent parcel pairs filtered by LGA
-all_adjacency_pairs = spark.sql(f"""
-    SELECT
-        a.parcel_1,
-        a.parcel_2,
-        a.zone_1,
-        a.zone_2,
-        ROUND(a.shared_boundary_m, 2) AS shared_boundary_m,
-        ST_AsGeoJSON(ST_Transform(p1.geometry, 4326)) AS geojson_1,
-        ST_AsGeoJSON(ST_Transform(p2.geometry, 4326)) AS geojson_2,
-        ST_X(ST_Centroid(ST_Transform(p1.geometry, 4326))) AS centroid_lon_1,
-        ST_Y(ST_Centroid(ST_Transform(p1.geometry, 4326))) AS centroid_lat_1,
-        ST_AsGeoJSON(ST_Transform(ST_Intersection(ST_Boundary(p1.geometry), ST_Boundary(p2.geometry)), 4326)) AS shared_boundary_geojson
-    FROM {catalog_name}.{schema_name}.parcel_adjacency a
-    JOIN {catalog_name}.{schema_name}.parcel_edge_topology p1 ON a.parcel_1 = p1.parcel_id
-    JOIN {catalog_name}.{schema_name}.parcel_edge_topology p2 ON a.parcel_2 = p2.parcel_id
-    WHERE a.shared_boundary_m > 5
-      AND p1.lga_name = '{sample_lga}'
-    ORDER BY a.shared_boundary_m DESC
-    LIMIT 50000
-""").toPandas()
-
-print(f"Loaded {len(all_adjacency_pairs)} adjacency pairs for full export")
-
-if len(all_adjacency_pairs) > 0:
-    center_lat = all_adjacency_pairs['centroid_lat_1'].mean()
-    center_lon = all_adjacency_pairs['centroid_lon_1'].mean()
-
-    m_adj_full = folium.Map(
-        location=[center_lat, center_lon],
-        zoom_start=14,
-        tiles='CartoDB positron'
-    )
-
-    pair_colors = ['#3388ff', '#33ff88', '#ff8833', '#8833ff', '#ff3388', '#88ff33']
-
-    for idx, row in all_adjacency_pairs.iterrows():
-        color = pair_colors[idx % len(pair_colors)]
-        try:
-            geojson_1 = json.loads(row['geojson_1'])
-            folium.GeoJson(
-                geojson_1,
-                style_function=lambda x, c=color: {'fillColor': c, 'color': c, 'weight': 1, 'fillOpacity': 0.3},
-                tooltip=f"Parcel: {row['parcel_1']}<br>Zone: {row['zone_1']}<br>Shared: {row['shared_boundary_m']}m"
-            ).add_to(m_adj_full)
-        except:
-            pass
-
-        try:
-            geojson_2 = json.loads(row['geojson_2'])
-            folium.GeoJson(
-                geojson_2,
-                style_function=lambda x, c=color: {'fillColor': c, 'color': c, 'weight': 1, 'fillOpacity': 0.3},
-                tooltip=f"Parcel: {row['parcel_2']}<br>Zone: {row['zone_2']}<br>Shared: {row['shared_boundary_m']}m"
-            ).add_to(m_adj_full)
-        except:
-            pass
-
-        try:
-            if row['shared_boundary_geojson']:
-                shared_geom = json.loads(row['shared_boundary_geojson'])
-                folium.GeoJson(
-                    shared_geom,
-                    style_function=lambda x: {'color': 'red', 'weight': 3, 'opacity': 0.8},
-                    tooltip=f"Shared Boundary: {row['shared_boundary_m']}m"
-                ).add_to(m_adj_full)
-        except:
-            pass
-
-    legend_html = f'''
-    <div style="position: fixed; bottom: 50px; left: 50px; width: 200px;
-                border:2px solid grey; z-index:9999; font-size:14px;
-                background-color:white; padding: 10px; border-radius: 5px;">
-        <b>All Adjacency Pairs</b><br>
-        <i style="background:rgba(51,136,255,0.3); width:18px; height:18px; display:inline-block;"></i> Parcel Pairs<br>
-        <i style="background:red; width:18px; height:3px; display:inline-block;"></i> Shared Boundary<br>
-        <small>Total pairs: {len(all_adjacency_pairs):,}</small>
-    </div>
-    '''
-    m_adj_full.get_root().html.add_child(folium.Element(legend_html))
-
-    # Save to UC Volume
-    volume_path = f"/Volumes/{catalog_name}/{schema_name}/source"
-    adj_html_path = f"{volume_path}/visualizations/folium_adjacency_pairs_{sample_lga.replace(' ', '_')}.html"
-
-    import os
-    os.makedirs(f"{volume_path}/visualizations", exist_ok=True)
-
-    m_adj_full.save(adj_html_path)
-    print(f"Adjacency pairs map for {sample_lga} saved to: {adj_html_path}")
-    print(f"Total pairs exported: {len(all_adjacency_pairs):,}")
+# NOTE: Visualization moved to Databricks App. Uncomment to run inline for debugging.
+# # Export adjacency pairs for target LGA to Folium HTML (filtered to avoid OOM)
+# import folium
+# import json
+#
+# catalog_name = dbutils.widgets.get("catalog_name")
+# schema_name = dbutils.widgets.get("schema_name")
+#
+# # Use same sample_lga as earlier in the notebook
+# # Get adjacent parcel pairs filtered by LGA
+# all_adjacency_pairs = spark.sql(f"""
+#     SELECT
+#         a.parcel_1,
+#         a.parcel_2,
+#         a.zone_1,
+#         a.zone_2,
+#         ROUND(a.shared_boundary_m, 2) AS shared_boundary_m,
+#         ST_AsGeoJSON(ST_Transform(p1.geometry, 4326)) AS geojson_1,
+#         ST_AsGeoJSON(ST_Transform(p2.geometry, 4326)) AS geojson_2,
+#         ST_X(ST_Centroid(ST_Transform(p1.geometry, 4326))) AS centroid_lon_1,
+#         ST_Y(ST_Centroid(ST_Transform(p1.geometry, 4326))) AS centroid_lat_1,
+#         ST_AsGeoJSON(ST_Transform(ST_Intersection(ST_Boundary(p1.geometry), ST_Boundary(p2.geometry)), 4326)) AS shared_boundary_geojson
+#     FROM {catalog_name}.{schema_name}.parcel_adjacency a
+#     JOIN {catalog_name}.{schema_name}.parcel_edge_topology p1 ON a.parcel_1 = p1.parcel_id
+#     JOIN {catalog_name}.{schema_name}.parcel_edge_topology p2 ON a.parcel_2 = p2.parcel_id
+#     WHERE a.shared_boundary_m > 5
+#       AND p1.lga_name = '{sample_lga}'
+#     ORDER BY a.shared_boundary_m DESC
+#     LIMIT 50000
+# """).toPandas()
+#
+# print(f"Loaded {len(all_adjacency_pairs)} adjacency pairs for full export")
+#
+# if len(all_adjacency_pairs) > 0:
+#     center_lat = all_adjacency_pairs['centroid_lat_1'].mean()
+#     center_lon = all_adjacency_pairs['centroid_lon_1'].mean()
+#
+#     m_adj_full = folium.Map(
+#         location=[center_lat, center_lon],
+#         zoom_start=14,
+#         tiles='CartoDB positron'
+#     )
+#
+#     pair_colors = ['#3388ff', '#33ff88', '#ff8833', '#8833ff', '#ff3388', '#88ff33']
+#
+#     for idx, row in all_adjacency_pairs.iterrows():
+#         color = pair_colors[idx % len(pair_colors)]
+#         try:
+#             geojson_1 = json.loads(row['geojson_1'])
+#             folium.GeoJson(
+#                 geojson_1,
+#                 style_function=lambda x, c=color: {'fillColor': c, 'color': c, 'weight': 1, 'fillOpacity': 0.3},
+#                 tooltip=f"Parcel: {row['parcel_1']}<br>Zone: {row['zone_1']}<br>Shared: {row['shared_boundary_m']}m"
+#             ).add_to(m_adj_full)
+#         except:
+#             pass
+#
+#         try:
+#             geojson_2 = json.loads(row['geojson_2'])
+#             folium.GeoJson(
+#                 geojson_2,
+#                 style_function=lambda x, c=color: {'fillColor': c, 'color': c, 'weight': 1, 'fillOpacity': 0.3},
+#                 tooltip=f"Parcel: {row['parcel_2']}<br>Zone: {row['zone_2']}<br>Shared: {row['shared_boundary_m']}m"
+#             ).add_to(m_adj_full)
+#         except:
+#             pass
+#
+#         try:
+#             if row['shared_boundary_geojson']:
+#                 shared_geom = json.loads(row['shared_boundary_geojson'])
+#                 folium.GeoJson(
+#                     shared_geom,
+#                     style_function=lambda x: {'color': 'red', 'weight': 3, 'opacity': 0.8},
+#                     tooltip=f"Shared Boundary: {row['shared_boundary_m']}m"
+#                 ).add_to(m_adj_full)
+#         except:
+#             pass
+#
+#     legend_html = f'''
+#     <div style="position: fixed; bottom: 50px; left: 50px; width: 200px;
+#                 border:2px solid grey; z-index:9999; font-size:14px;
+#                 background-color:white; padding: 10px; border-radius: 5px;">
+#         <b>All Adjacency Pairs</b><br>
+#         <i style="background:rgba(51,136,255,0.3); width:18px; height:18px; display:inline-block;"></i> Parcel Pairs<br>
+#         <i style="background:red; width:18px; height:3px; display:inline-block;"></i> Shared Boundary<br>
+#         <small>Total pairs: {len(all_adjacency_pairs):,}</small>
+#     </div>
+#     '''
+#     m_adj_full.get_root().html.add_child(folium.Element(legend_html))
+#
+#     # Save to UC Volume
+#     volume_path = f"/Volumes/{catalog_name}/{schema_name}/source"
+#     adj_html_path = f"{volume_path}/visualizations/folium_adjacency_pairs_{sample_lga.replace(' ', '_')}.html"
+#
+#     import os
+#     os.makedirs(f"{volume_path}/visualizations", exist_ok=True)
+#
+#     m_adj_full.save(adj_html_path)
+#     print(f"Adjacency pairs map for {sample_lga} saved to: {adj_html_path}")
+#     print(f"Total pairs exported: {len(all_adjacency_pairs):,}")
 
 # COMMAND ----------
 
@@ -796,6 +802,8 @@ if len(all_adjacency_pairs) > 0:
 # MAGIC ### Folium Map: Internal Lots vs Normal Lots
 # MAGIC
 # MAGIC Visualize parcels by their topology classification - internal lots (high shared boundary ratio) vs normal lots.
+# MAGIC
+# MAGIC **Note:** Visualization moved to Databricks App.
 
 # COMMAND ----------
 
@@ -831,183 +839,187 @@ print(f"Retrieved {len(topology_parcels)} parcels with notable topology characte
 
 # COMMAND ----------
 
-import folium
-import json
-
-if len(topology_parcels) > 0:
-    # Create map
-    center_lat = topology_parcels['centroid_lat'].mean()
-    center_lon = topology_parcels['centroid_lon'].mean()
-
-    m = folium.Map(
-        location=[center_lat, center_lon],
-        zoom_start=15,
-        tiles='CartoDB positron'
-    )
-
-    # Add parcels colored by topology type
-    for _, row in topology_parcels.iterrows():
-        try:
-            geojson = json.loads(row['geojson'])
-
-            # Color based on topology classification
-            if row['is_internal_lot']:
-                color = '#e31a1c'  # Red for internal lots
-                category = "Internal Lot"
-            elif row['is_isolated_lot']:
-                color = '#ff7f00'  # Orange for isolated lots
-                category = "Isolated Lot"
-            elif row['has_long_shared_boundary']:
-                color = '#33a02c'  # Green for good consolidation potential
-                category = "Long Shared Boundary"
-            else:
-                color = '#1f78b4'  # Blue for others
-                category = "Normal"
-
-            tooltip = f"""
-                <b>Parcel:</b> {row['parcel_id']}<br>
-                <b>Zone:</b> {row['zone_code']}<br>
-                <b>Area:</b> {row['area_sqm']:.0f} sqm<br>
-                <b>Neighbors:</b> {row['num_adjacent_parcels']}<br>
-                <b>Shared Boundary:</b> {row['total_shared_boundary_m']:.1f}m<br>
-                <b>Type:</b> {category}
-            """
-
-            folium.GeoJson(
-                geojson,
-                style_function=lambda x, c=color: {
-                    'fillColor': c,
-                    'color': c,
-                    'weight': 1,
-                    'fillOpacity': 0.5
-                },
-                tooltip=folium.Tooltip(tooltip)
-            ).add_to(m)
-        except:
-            pass
-
-    # Add legend
-    legend_html = '''
-    <div style="position: fixed;
-                bottom: 50px; left: 50px; width: 220px; height: 130px;
-                border:2px solid grey; z-index:9999; font-size:14px;
-                background-color:white; padding: 10px;
-                border-radius: 5px;">
-        <b>Topology Classification</b><br>
-        <i style="background:#e31a1c; width:18px; height:18px; display:inline-block;"></i> Internal Lot (>95% shared)<br>
-        <i style="background:#ff7f00; width:18px; height:18px; display:inline-block;"></i> Isolated Lot (no neighbors)<br>
-        <i style="background:#33a02c; width:18px; height:18px; display:inline-block;"></i> Long Shared Boundary (>15m)<br>
-        <i style="background:#1f78b4; width:18px; height:18px; display:inline-block;"></i> Normal
-    </div>
-    '''
-    m.get_root().html.add_child(folium.Element(legend_html))
-
-    # Use displayHTML for proper rendering in Databricks
-    displayHTML(m._repr_html_())
-else:
-    print("No parcels found for topology visualization")
+# NOTE: Visualization moved to Databricks App. Uncomment to run inline for debugging.
+# import folium
+# import json
+#
+# if len(topology_parcels) > 0:
+#     # Create map
+#     center_lat = topology_parcels['centroid_lat'].mean()
+#     center_lon = topology_parcels['centroid_lon'].mean()
+#
+#     m = folium.Map(
+#         location=[center_lat, center_lon],
+#         zoom_start=15,
+#         tiles='CartoDB positron'
+#     )
+#
+#     # Add parcels colored by topology type
+#     for _, row in topology_parcels.iterrows():
+#         try:
+#             geojson = json.loads(row['geojson'])
+#
+#             # Color based on topology classification
+#             if row['is_internal_lot']:
+#                 color = '#e31a1c'  # Red for internal lots
+#                 category = "Internal Lot"
+#             elif row['is_isolated_lot']:
+#                 color = '#ff7f00'  # Orange for isolated lots
+#                 category = "Isolated Lot"
+#             elif row['has_long_shared_boundary']:
+#                 color = '#33a02c'  # Green for good consolidation potential
+#                 category = "Long Shared Boundary"
+#             else:
+#                 color = '#1f78b4'  # Blue for others
+#                 category = "Normal"
+#
+#             tooltip = f"""
+#                 <b>Parcel:</b> {row['parcel_id']}<br>
+#                 <b>Zone:</b> {row['zone_code']}<br>
+#                 <b>Area:</b> {row['area_sqm']:.0f} sqm<br>
+#                 <b>Neighbors:</b> {row['num_adjacent_parcels']}<br>
+#                 <b>Shared Boundary:</b> {row['total_shared_boundary_m']:.1f}m<br>
+#                 <b>Type:</b> {category}
+#             """
+#
+#             folium.GeoJson(
+#                 geojson,
+#                 style_function=lambda x, c=color: {
+#                     'fillColor': c,
+#                     'color': c,
+#                     'weight': 1,
+#                     'fillOpacity': 0.5
+#                 },
+#                 tooltip=folium.Tooltip(tooltip)
+#             ).add_to(m)
+#         except:
+#             pass
+#
+#     # Add legend
+#     legend_html = '''
+#     <div style="position: fixed;
+#                 bottom: 50px; left: 50px; width: 220px; height: 130px;
+#                 border:2px solid grey; z-index:9999; font-size:14px;
+#                 background-color:white; padding: 10px;
+#                 border-radius: 5px;">
+#         <b>Topology Classification</b><br>
+#         <i style="background:#e31a1c; width:18px; height:18px; display:inline-block;"></i> Internal Lot (>95% shared)<br>
+#         <i style="background:#ff7f00; width:18px; height:18px; display:inline-block;"></i> Isolated Lot (no neighbors)<br>
+#         <i style="background:#33a02c; width:18px; height:18px; display:inline-block;"></i> Long Shared Boundary (>15m)<br>
+#         <i style="background:#1f78b4; width:18px; height:18px; display:inline-block;"></i> Normal
+#     </div>
+#     '''
+#     m.get_root().html.add_child(folium.Element(legend_html))
+#
+#     # Use displayHTML for proper rendering in Databricks
+#     displayHTML(m._repr_html_())
+# else:
+#     print("No parcels found for topology visualization")
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ### Export Full Topology Classification Map to UC Volume
+# MAGIC
+# MAGIC **Note:** Visualization moved to Databricks App.
 
 # COMMAND ----------
 
-# Export topology classified parcels for target LGA to Folium HTML (filtered to avoid OOM)
-import folium
-import json
-
-catalog_name = dbutils.widgets.get("catalog_name")
-schema_name = dbutils.widgets.get("schema_name")
-
-# Get parcels with topology features filtered by LGA
-all_topology_parcels = spark.sql(f"""
-    SELECT
-        parcel_id,
-        zone_code,
-        area_sqm,
-        num_adjacent_parcels,
-        total_shared_boundary_m,
-        longest_shared_boundary_m,
-        estimated_frontage_ratio,
-        is_internal_lot,
-        is_isolated_lot,
-        has_long_shared_boundary,
-        centroid_lon,
-        centroid_lat,
-        ST_AsGeoJSON(ST_Transform(geometry, 4326)) AS geojson
-    FROM {catalog_name}.{schema_name}.parcel_edge_topology
-    WHERE geometry IS NOT NULL
-      AND centroid_lon IS NOT NULL
-      AND lga_name = '{sample_lga}'
-    ORDER BY total_shared_boundary_m DESC
-    LIMIT 50000
-""").toPandas()
-
-print(f"Loaded {len(all_topology_parcels)} parcels for full topology export")
-
-if len(all_topology_parcels) > 0:
-    center_lat = all_topology_parcels['centroid_lat'].mean()
-    center_lon = all_topology_parcels['centroid_lon'].mean()
-
-    m_topo_full = folium.Map(
-        location=[center_lat, center_lon],
-        zoom_start=13,
-        tiles='CartoDB positron'
-    )
-
-    # Count by category
-    internal_count = all_topology_parcels['is_internal_lot'].sum()
-    isolated_count = all_topology_parcels['is_isolated_lot'].sum()
-    long_boundary_count = all_topology_parcels['has_long_shared_boundary'].sum()
-
-    for _, row in all_topology_parcels.iterrows():
-        try:
-            geojson = json.loads(row['geojson'])
-
-            if row['is_internal_lot']:
-                color = '#e31a1c'
-                category = "Internal Lot"
-            elif row['is_isolated_lot']:
-                color = '#ff7f00'
-                category = "Isolated Lot"
-            elif row['has_long_shared_boundary']:
-                color = '#33a02c'
-                category = "Long Shared Boundary"
-            else:
-                color = '#1f78b4'
-                category = "Normal"
-
-            folium.GeoJson(
-                geojson,
-                style_function=lambda x, c=color: {'fillColor': c, 'color': c, 'weight': 0.5, 'fillOpacity': 0.5},
-                tooltip=f"Parcel: {row['parcel_id']}<br>Zone: {row['zone_code']}<br>Type: {category}<br>Neighbors: {row['num_adjacent_parcels']}"
-            ).add_to(m_topo_full)
-        except:
-            pass
-
-    legend_html = f'''
-    <div style="position: fixed; bottom: 50px; left: 50px; width: 250px;
-                border:2px solid grey; z-index:9999; font-size:14px;
-                background-color:white; padding: 10px; border-radius: 5px;">
-        <b>Topology Classification (Full)</b><br>
-        <i style="background:#e31a1c; width:18px; height:18px; display:inline-block;"></i> Internal Lot ({internal_count:,})<br>
-        <i style="background:#ff7f00; width:18px; height:18px; display:inline-block;"></i> Isolated Lot ({isolated_count:,})<br>
-        <i style="background:#33a02c; width:18px; height:18px; display:inline-block;"></i> Long Shared Boundary ({long_boundary_count:,})<br>
-        <i style="background:#1f78b4; width:18px; height:18px; display:inline-block;"></i> Normal<br>
-        <small>Total: {len(all_topology_parcels):,}</small>
-    </div>
-    '''
-    m_topo_full.get_root().html.add_child(folium.Element(legend_html))
-
-    # Save to UC Volume
-    volume_path = f"/Volumes/{catalog_name}/{schema_name}/source"
-    topo_html_path = f"{volume_path}/visualizations/folium_topology_classification_{sample_lga.replace(' ', '_')}.html"
-
-    m_topo_full.save(topo_html_path)
-    print(f"Topology classification map for {sample_lga} saved to: {topo_html_path}")
-    print(f"Breakdown: Internal={internal_count}, Isolated={isolated_count}, Long Boundary={long_boundary_count}")
+# NOTE: Visualization moved to Databricks App. Uncomment to run inline for debugging.
+# # Export topology classified parcels for target LGA to Folium HTML (filtered to avoid OOM)
+# import folium
+# import json
+#
+# catalog_name = dbutils.widgets.get("catalog_name")
+# schema_name = dbutils.widgets.get("schema_name")
+#
+# # Get parcels with topology features filtered by LGA
+# all_topology_parcels = spark.sql(f"""
+#     SELECT
+#         parcel_id,
+#         zone_code,
+#         area_sqm,
+#         num_adjacent_parcels,
+#         total_shared_boundary_m,
+#         longest_shared_boundary_m,
+#         estimated_frontage_ratio,
+#         is_internal_lot,
+#         is_isolated_lot,
+#         has_long_shared_boundary,
+#         centroid_lon,
+#         centroid_lat,
+#         ST_AsGeoJSON(ST_Transform(geometry, 4326)) AS geojson
+#     FROM {catalog_name}.{schema_name}.parcel_edge_topology
+#     WHERE geometry IS NOT NULL
+#       AND centroid_lon IS NOT NULL
+#       AND lga_name = '{sample_lga}'
+#     ORDER BY total_shared_boundary_m DESC
+#     LIMIT 50000
+# """).toPandas()
+#
+# print(f"Loaded {len(all_topology_parcels)} parcels for full topology export")
+#
+# if len(all_topology_parcels) > 0:
+#     center_lat = all_topology_parcels['centroid_lat'].mean()
+#     center_lon = all_topology_parcels['centroid_lon'].mean()
+#
+#     m_topo_full = folium.Map(
+#         location=[center_lat, center_lon],
+#         zoom_start=13,
+#         tiles='CartoDB positron'
+#     )
+#
+#     # Count by category
+#     internal_count = all_topology_parcels['is_internal_lot'].sum()
+#     isolated_count = all_topology_parcels['is_isolated_lot'].sum()
+#     long_boundary_count = all_topology_parcels['has_long_shared_boundary'].sum()
+#
+#     for _, row in all_topology_parcels.iterrows():
+#         try:
+#             geojson = json.loads(row['geojson'])
+#
+#             if row['is_internal_lot']:
+#                 color = '#e31a1c'
+#                 category = "Internal Lot"
+#             elif row['is_isolated_lot']:
+#                 color = '#ff7f00'
+#                 category = "Isolated Lot"
+#             elif row['has_long_shared_boundary']:
+#                 color = '#33a02c'
+#                 category = "Long Shared Boundary"
+#             else:
+#                 color = '#1f78b4'
+#                 category = "Normal"
+#
+#             folium.GeoJson(
+#                 geojson,
+#                 style_function=lambda x, c=color: {'fillColor': c, 'color': c, 'weight': 0.5, 'fillOpacity': 0.5},
+#                 tooltip=f"Parcel: {row['parcel_id']}<br>Zone: {row['zone_code']}<br>Type: {category}<br>Neighbors: {row['num_adjacent_parcels']}"
+#             ).add_to(m_topo_full)
+#         except:
+#             pass
+#
+#     legend_html = f'''
+#     <div style="position: fixed; bottom: 50px; left: 50px; width: 250px;
+#                 border:2px solid grey; z-index:9999; font-size:14px;
+#                 background-color:white; padding: 10px; border-radius: 5px;">
+#         <b>Topology Classification (Full)</b><br>
+#         <i style="background:#e31a1c; width:18px; height:18px; display:inline-block;"></i> Internal Lot ({internal_count:,})<br>
+#         <i style="background:#ff7f00; width:18px; height:18px; display:inline-block;"></i> Isolated Lot ({isolated_count:,})<br>
+#         <i style="background:#33a02c; width:18px; height:18px; display:inline-block;"></i> Long Shared Boundary ({long_boundary_count:,})<br>
+#         <i style="background:#1f78b4; width:18px; height:18px; display:inline-block;"></i> Normal<br>
+#         <small>Total: {len(all_topology_parcels):,}</small>
+#     </div>
+#     '''
+#     m_topo_full.get_root().html.add_child(folium.Element(legend_html))
+#
+#     # Save to UC Volume
+#     volume_path = f"/Volumes/{catalog_name}/{schema_name}/source"
+#     topo_html_path = f"{volume_path}/visualizations/folium_topology_classification_{sample_lga.replace(' ', '_')}.html"
+#
+#     m_topo_full.save(topo_html_path)
+#     print(f"Topology classification map for {sample_lga} saved to: {topo_html_path}")
+#     print(f"Breakdown: Internal={internal_count}, Isolated={isolated_count}, Long Boundary={long_boundary_count}")
 
 # COMMAND ----------
 
@@ -1015,6 +1027,8 @@ if len(all_topology_parcels) > 0:
 # MAGIC ### PyDeck 3D Visualization: Adjacency Density
 # MAGIC
 # MAGIC 3D column chart showing parcels with height proportional to number of adjacent parcels.
+# MAGIC
+# MAGIC **Note:** Visualization moved to Databricks App.
 
 # COMMAND ----------
 
@@ -1041,149 +1055,153 @@ print(f"Retrieved {len(adjacency_3d)} parcels for 3D visualization")
 
 # COMMAND ----------
 
-import pydeck as pdk
-
-if len(adjacency_3d) > 0:
-    # Prepare data for pydeck
-    adjacency_3d['elevation'] = adjacency_3d['num_adjacent_parcels'] * 50  # Scale for visibility
-
-    # Color based on total shared boundary
-    def get_color(shared_boundary):
-        if shared_boundary > 50:
-            return [227, 26, 28, 180]  # Red
-        elif shared_boundary > 30:
-            return [255, 127, 0, 180]  # Orange
-        elif shared_boundary > 15:
-            return [255, 255, 51, 180]  # Yellow
-        else:
-            return [51, 160, 44, 180]  # Green
-
-    adjacency_3d['color'] = adjacency_3d['total_shared_boundary_m'].apply(get_color)
-
-    # Create the deck
-    layer = pdk.Layer(
-        "ColumnLayer",
-        data=adjacency_3d,
-        get_position=["centroid_lon", "centroid_lat"],
-        get_elevation="elevation",
-        elevation_scale=1,
-        radius=15,
-        get_fill_color="color",
-        pickable=True,
-        auto_highlight=True
-    )
-
-    view_state = pdk.ViewState(
-        latitude=adjacency_3d['centroid_lat'].mean(),
-        longitude=adjacency_3d['centroid_lon'].mean(),
-        zoom=14,
-        pitch=45,
-        bearing=0
-    )
-
-    deck = pdk.Deck(
-        layers=[layer],
-        initial_view_state=view_state,
-        tooltip={
-            "html": "<b>Parcel:</b> {parcel_id}<br/>"
-                    "<b>Neighbors:</b> {num_adjacent_parcels}<br/>"
-                    "<b>Total Shared Boundary:</b> {total_shared_boundary_m:.1f}m<br/>"
-                    "<b>Area:</b> {area_sqm:.0f} sqm",
-            "style": {"backgroundColor": "steelblue", "color": "white"}
-        }
-    )
-
-    display(deck)
-else:
-    print("No data available for 3D visualization")
+# NOTE: Visualization moved to Databricks App. Uncomment to run inline for debugging.
+# import pydeck as pdk
+#
+# if len(adjacency_3d) > 0:
+#     # Prepare data for pydeck
+#     adjacency_3d['elevation'] = adjacency_3d['num_adjacent_parcels'] * 50  # Scale for visibility
+#
+#     # Color based on total shared boundary
+#     def get_color(shared_boundary):
+#         if shared_boundary > 50:
+#             return [227, 26, 28, 180]  # Red
+#         elif shared_boundary > 30:
+#             return [255, 127, 0, 180]  # Orange
+#         elif shared_boundary > 15:
+#             return [255, 255, 51, 180]  # Yellow
+#         else:
+#             return [51, 160, 44, 180]  # Green
+#
+#     adjacency_3d['color'] = adjacency_3d['total_shared_boundary_m'].apply(get_color)
+#
+#     # Create the deck
+#     layer = pdk.Layer(
+#         "ColumnLayer",
+#         data=adjacency_3d,
+#         get_position=["centroid_lon", "centroid_lat"],
+#         get_elevation="elevation",
+#         elevation_scale=1,
+#         radius=15,
+#         get_fill_color="color",
+#         pickable=True,
+#         auto_highlight=True
+#     )
+#
+#     view_state = pdk.ViewState(
+#         latitude=adjacency_3d['centroid_lat'].mean(),
+#         longitude=adjacency_3d['centroid_lon'].mean(),
+#         zoom=14,
+#         pitch=45,
+#         bearing=0
+#     )
+#
+#     deck = pdk.Deck(
+#         layers=[layer],
+#         initial_view_state=view_state,
+#         tooltip={
+#             "html": "<b>Parcel:</b> {parcel_id}<br/>"
+#                     "<b>Neighbors:</b> {num_adjacent_parcels}<br/>"
+#                     "<b>Total Shared Boundary:</b> {total_shared_boundary_m:.1f}m<br/>"
+#                     "<b>Area:</b> {area_sqm:.0f} sqm",
+#             "style": {"backgroundColor": "steelblue", "color": "white"}
+#         }
+#     )
+#
+#     display(deck)
+# else:
+#     print("No data available for 3D visualization")
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ### Export Full 3D Adjacency Map to UC Volume
+# MAGIC
+# MAGIC **Note:** Visualization moved to Databricks App.
 
 # COMMAND ----------
 
-# Export parcels with adjacency data for target LGA as PyDeck 3D HTML (filtered to avoid OOM)
-import pydeck as pdk
-
-catalog_name = dbutils.widgets.get("catalog_name")
-schema_name = dbutils.widgets.get("schema_name")
-
-# Get parcels with adjacency filtered by LGA
-all_adjacency_3d = spark.sql(f"""
-    SELECT
-        parcel_id,
-        centroid_lon,
-        centroid_lat,
-        num_adjacent_parcels,
-        total_shared_boundary_m,
-        area_sqm
-    FROM {catalog_name}.{schema_name}.parcel_edge_topology
-    WHERE centroid_lon IS NOT NULL
-      AND num_adjacent_parcels > 0
-      AND lga_name = '{sample_lga}'
-    ORDER BY num_adjacent_parcels DESC
-    LIMIT 50000
-""").toPandas()
-
-print(f"Loaded {len(all_adjacency_3d)} parcels for full 3D export")
-
-if len(all_adjacency_3d) > 0:
-    # Prepare data
-    all_adjacency_3d['elevation'] = all_adjacency_3d['num_adjacent_parcels'] * 50
-
-    def get_color(shared_boundary):
-        if shared_boundary > 50:
-            return [227, 26, 28, 180]
-        elif shared_boundary > 30:
-            return [255, 127, 0, 180]
-        elif shared_boundary > 15:
-            return [255, 255, 51, 180]
-        else:
-            return [51, 160, 44, 180]
-
-    all_adjacency_3d['color'] = all_adjacency_3d['total_shared_boundary_m'].apply(get_color)
-
-    layer = pdk.Layer(
-        "ColumnLayer",
-        data=all_adjacency_3d,
-        get_position=["centroid_lon", "centroid_lat"],
-        get_elevation="elevation",
-        elevation_scale=1,
-        radius=10,
-        get_fill_color="color",
-        pickable=True,
-        auto_highlight=True
-    )
-
-    view_state = pdk.ViewState(
-        latitude=all_adjacency_3d['centroid_lat'].mean(),
-        longitude=all_adjacency_3d['centroid_lon'].mean(),
-        zoom=13,
-        pitch=45,
-        bearing=0
-    )
-
-    deck_full = pdk.Deck(
-        layers=[layer],
-        initial_view_state=view_state,
-        tooltip={
-            "html": "<b>Parcel:</b> {parcel_id}<br/>"
-                    "<b>Neighbors:</b> {num_adjacent_parcels}<br/>"
-                    "<b>Shared Boundary:</b> {total_shared_boundary_m:.1f}m<br/>"
-                    "<b>Area:</b> {area_sqm:.0f} sqm",
-            "style": {"backgroundColor": "steelblue", "color": "white"}
-        }
-    )
-
-    # Save to UC Volume
-    volume_path = f"/Volumes/{catalog_name}/{schema_name}/source"
-    pydeck_3d_path = f"{volume_path}/visualizations/pydeck_adjacency_3d_{sample_lga.replace(' ', '_')}.html"
-
-    deck_full.to_html(pydeck_3d_path)
-    print(f"3D adjacency map for {sample_lga} saved to: {pydeck_3d_path}")
-    print(f"Total parcels exported: {len(all_adjacency_3d):,}")
+# NOTE: Visualization moved to Databricks App. Uncomment to run inline for debugging.
+# # Export parcels with adjacency data for target LGA as PyDeck 3D HTML (filtered to avoid OOM)
+# import pydeck as pdk
+#
+# catalog_name = dbutils.widgets.get("catalog_name")
+# schema_name = dbutils.widgets.get("schema_name")
+#
+# # Get parcels with adjacency filtered by LGA
+# all_adjacency_3d = spark.sql(f"""
+#     SELECT
+#         parcel_id,
+#         centroid_lon,
+#         centroid_lat,
+#         num_adjacent_parcels,
+#         total_shared_boundary_m,
+#         area_sqm
+#     FROM {catalog_name}.{schema_name}.parcel_edge_topology
+#     WHERE centroid_lon IS NOT NULL
+#       AND num_adjacent_parcels > 0
+#       AND lga_name = '{sample_lga}'
+#     ORDER BY num_adjacent_parcels DESC
+#     LIMIT 50000
+# """).toPandas()
+#
+# print(f"Loaded {len(all_adjacency_3d)} parcels for full 3D export")
+#
+# if len(all_adjacency_3d) > 0:
+#     # Prepare data
+#     all_adjacency_3d['elevation'] = all_adjacency_3d['num_adjacent_parcels'] * 50
+#
+#     def get_color(shared_boundary):
+#         if shared_boundary > 50:
+#             return [227, 26, 28, 180]
+#         elif shared_boundary > 30:
+#             return [255, 127, 0, 180]
+#         elif shared_boundary > 15:
+#             return [255, 255, 51, 180]
+#         else:
+#             return [51, 160, 44, 180]
+#
+#     all_adjacency_3d['color'] = all_adjacency_3d['total_shared_boundary_m'].apply(get_color)
+#
+#     layer = pdk.Layer(
+#         "ColumnLayer",
+#         data=all_adjacency_3d,
+#         get_position=["centroid_lon", "centroid_lat"],
+#         get_elevation="elevation",
+#         elevation_scale=1,
+#         radius=10,
+#         get_fill_color="color",
+#         pickable=True,
+#         auto_highlight=True
+#     )
+#
+#     view_state = pdk.ViewState(
+#         latitude=all_adjacency_3d['centroid_lat'].mean(),
+#         longitude=all_adjacency_3d['centroid_lon'].mean(),
+#         zoom=13,
+#         pitch=45,
+#         bearing=0
+#     )
+#
+#     deck_full = pdk.Deck(
+#         layers=[layer],
+#         initial_view_state=view_state,
+#         tooltip={
+#             "html": "<b>Parcel:</b> {parcel_id}<br/>"
+#                     "<b>Neighbors:</b> {num_adjacent_parcels}<br/>"
+#                     "<b>Shared Boundary:</b> {total_shared_boundary_m:.1f}m<br/>"
+#                     "<b>Area:</b> {area_sqm:.0f} sqm",
+#             "style": {"backgroundColor": "steelblue", "color": "white"}
+#         }
+#     )
+#
+#     # Save to UC Volume
+#     volume_path = f"/Volumes/{catalog_name}/{schema_name}/source"
+#     pydeck_3d_path = f"{volume_path}/visualizations/pydeck_adjacency_3d_{sample_lga.replace(' ', '_')}.html"
+#
+#     deck_full.to_html(pydeck_3d_path)
+#     print(f"3D adjacency map for {sample_lga} saved to: {pydeck_3d_path}")
+#     print(f"Total parcels exported: {len(all_adjacency_3d):,}")
 
 # COMMAND ----------
 

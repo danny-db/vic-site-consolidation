@@ -1,0 +1,44 @@
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#2196F3', 'primaryTextColor': '#fff', 'primaryBorderColor': '#1565C0', 'lineColor': '#42A5F5', 'secondaryColor': '#E3F2FD', 'fontSize': '14px'}}}%%
+flowchart TD
+    subgraph prep["DATA PREPARATION"]
+        nb00["<b>00: Geo DataSource</b><br/><i>Register custom PySpark DataSource</i><br/>geo_datasource/01_geo_datasource_definition.py"]
+        nb01["<b>01: Data Ingestion</b><br/><i>Load 6 datasets → Delta tables</i><br/>land_parcel_analysis/01_data_ingestion.py"]
+        nb00 --> nb01
+    end
+
+    subgraph phase1["PHASE 1: FEATURE ENGINEERING"]
+        nb02["<b>02: Geometric Features</b><br/><i>Area, perimeter, compactness</i><br/><i>aspect ratio, elongation</i><br/>~5-10 min"]
+        nb03["<b>03: Edge Topology</b><br/><i>Adjacency, shared boundaries</i><br/><i>internal lot detection</i><br/>~10-30 min"]
+        nb03a["<b>03a: Road Frontage</b><br/><i>Frontage length, corner lots</i><br/><i>laneway access</i><br/>~5-10 min"]
+        nb03b["<b>03b: Activity Centre</b><br/><i>Distance to MACs, Major,</i><br/><i>Neighbourhood centres</i><br/>~5-10 min"]
+
+        nb02 --> nb03
+        nb03 --> nb03a
+        nb03 --> nb03b
+    end
+
+    subgraph phase2["PHASE 2: SUITABILITY SCORING"]
+        nb04["<b>04: Suitability Scoring</b><br/><i>PT proximity + Overlay detection</i><br/><i>Growth-area constraints</i><br/><i>Weighted multi-criteria model</i><br/><i>Tier ranking + Pair analysis</i><br/>~5-10 min"]
+    end
+
+    subgraph phase3["PHASE 3: SERVING LAYER"]
+        nb05["<b>05: Lakebase Sync</b><br/><i>Create PostGIS project</i><br/><i>Sync tables + spatial indexes</i><br/>~2-5 min"]
+        dbapp["<b>Databricks App</b><br/><i>FastAPI + Deck.gl</i><br/><i>Interactive map viewer</i>"]
+        nb05 --> dbapp
+    end
+
+    nb01 --> nb02
+    nb03a --> nb04
+    nb03b --> nb04
+    nb04 --> nb05
+
+    parallel["Stages 3a and 3b<br/>run in PARALLEL"]
+
+    style prep fill:#E3F2FD,stroke:#1565C0,stroke-width:2px
+    style phase1 fill:#E8F5E9,stroke:#2E7D32,stroke-width:2px
+    style phase2 fill:#FFF3E0,stroke:#E65100,stroke-width:2px
+    style phase3 fill:#F3E5F5,stroke:#7B1FA2,stroke-width:2px
+    style parallel fill:#FFF9C4,stroke:#F9A825,stroke-width:1px,stroke-dasharray: 5
+    style nb03a fill:#C8E6C9,stroke:#388E3C
+    style nb03b fill:#C8E6C9,stroke:#388E3C
+    style dbapp fill:#E1BEE7,stroke:#7B1FA2

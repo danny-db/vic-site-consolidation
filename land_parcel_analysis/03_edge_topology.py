@@ -57,64 +57,47 @@ display(spark.sql(f"SHOW TABLES IN {catalog_name}.{schema_name}"))
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 2. Identify Shared Boundaries Between Parcels
+# MAGIC ## 2. Generate H3 Spatial Index for All Parcels
 # MAGIC
-# MAGIC Find which parcels share boundaries (adjacent parcels). This is the most important feature for consolidation analysis.
+# MAGIC Instead of a brute-force CROSS JOIN (O(n²)), we use **H3 hexagonal indexing** to
+# MAGIC efficiently identify candidate adjacent parcels:
+# MAGIC
+# MAGIC 1. **Tessellate** each parcel polygon into H3 cells (`h3_tessellateaswkb`)
+# MAGIC 2. **Equi-join** on H3 cell ID to find candidate neighbours (standard hash join)
+# MAGIC 3. **Verify** with exact `ST_Intersects` on the actual geometry
+# MAGIC
+# MAGIC This converts O(n²) geometry comparisons into O(n) + a small filtered set,
+# MAGIC and works with **Photon** for additional acceleration.
+# MAGIC
+# MAGIC **Reference:** [Spatial Analytics at Any Scale with H3 and Photon](https://www.databricks.com/blog/2022/12/13/spatial-analytics-any-scale-h3-and-photon.html)
 
 # COMMAND ----------
 
 catalog_name = dbutils.widgets.get("catalog_name")
 schema_name = dbutils.widgets.get("schema_name")
 
-# For large datasets, we need to limit the scope to avoid cross-join explosion
-# We'll use a sample or filter to a specific LGA for demonstration
+# H3 resolution for tessellation
+# Resolution 10: ~65m hexagons — good balance for suburban parcel adjacency detection
+# Finer than res 9 (~174m) to reduce false positive candidate pairs
+H3_RESOLUTION = 10
 
-# First, let's see the distribution by LGA
-display(spark.sql(f"""
-    SELECT
-        lga_name,
-        COUNT(*) AS parcel_count
+total_parcels = spark.sql(f"""
+    SELECT COUNT(*) AS cnt
     FROM {catalog_name}.{schema_name}.parcel_geometric_features
-    GROUP BY lga_name
-    ORDER BY parcel_count DESC
-    LIMIT 20
-"""))
+    WHERE geometry IS NOT NULL
+""").first()["cnt"]
+
+print(f"Total parcels with geometry: {total_parcels:,}")
+print(f"H3 resolution: {H3_RESOLUTION} (~65m hexagons)")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Create Adjacency Table for a Sample LGA
+# MAGIC ### Create H3 Tessellation Index
 # MAGIC
-# MAGIC Due to the large dataset size, we'll compute adjacency for a sample area first.
-
-# COMMAND ----------
-
-catalog_name = dbutils.widgets.get("catalog_name")
-schema_name = dbutils.widgets.get("schema_name")
-
-# Create adjacency table for parcels
-# Find adjacent parcels using ST_Intersects on boundaries (share boundary but don't overlap)
-# Limiting to a sample LGA for performance
-
-# Use Casey LGA - Metro Melbourne area with good Activity Centre coverage
-sample_lga = "CASEY"
-
-# Verify the LGA exists
-lga_check = spark.sql(f"""
-    SELECT COUNT(*) AS cnt
-    FROM {catalog_name}.{schema_name}.parcel_geometric_features
-    WHERE lga_name = '{sample_lga}'
-""").collect()[0]['cnt']
-
-if lga_check == 0:
-    print(f"WARNING: {sample_lga} not found. Falling back to most common LGA.")
-    sample_lga = spark.sql(f"""
-        SELECT lga_name FROM {catalog_name}.{schema_name}.parcel_geometric_features
-        WHERE zone_code LIKE 'GRZ%' OR zone_code LIKE 'NRZ%'
-        GROUP BY lga_name ORDER BY COUNT(*) DESC LIMIT 1
-    """).collect()[0][0]
-
-print(f"Computing adjacency for LGA: {sample_lga} ({lga_check:,} parcels)")
+# MAGIC Tessellate every parcel polygon into H3 hexagonal cells. Each parcel produces
+# MAGIC multiple rows — one per overlapping H3 cell. Boundary (chip) cells are included,
+# MAGIC which is critical for detecting adjacent parcels that share an edge.
 
 # COMMAND ----------
 
@@ -122,54 +105,101 @@ catalog_name = dbutils.widgets.get("catalog_name")
 schema_name = dbutils.widgets.get("schema_name")
 
 # ============================================================================
-# ADJACENCY ANALYSIS: Find Neighboring Parcels with Shared Boundaries
+# H3 TESSELLATION: Index parcel polygons into hexagonal cells
 # ============================================================================
-# This identifies which parcels share a common boundary - critical for
-# consolidation analysis since adjacent lots can potentially be merged.
+# h3_tessellateaswkb(wkt, resolution) returns an array of structs:
+#   - cellid (BIGINT): the H3 cell index
+#   - core (BOOLEAN): TRUE if cell is fully inside the polygon
+#   - chip (BINARY): WKB geometry of the clipped cell (for boundary cells)
 #
-# KEY SPATIAL FUNCTIONS:
+# We only need cellid for the equi-join pre-filter.
+# Geometry must be in WGS84 (EPSG:4326) for H3 functions.
+# ============================================================================
+spark.sql(f"""
+    CREATE OR REPLACE TABLE {catalog_name}.{schema_name}.parcel_h3_index AS
+    SELECT p.parcel_id, h3.cellid AS h3_cell
+    FROM {catalog_name}.{schema_name}.parcel_geometric_features p
+    LATERAL VIEW inline(
+        h3_tessellateaswkb(ST_AsText(ST_Transform(p.geometry, 4326)), {H3_RESOLUTION})
+    ) h3 AS cellid, core, chip
+    WHERE p.geometry IS NOT NULL
+""")
+
+h3_stats = spark.sql(f"""
+    SELECT
+        COUNT(*) AS total_cells,
+        COUNT(DISTINCT parcel_id) AS parcels_indexed,
+        COUNT(DISTINCT h3_cell) AS unique_cells,
+        ROUND(COUNT(*) / COUNT(DISTINCT parcel_id), 1) AS avg_cells_per_parcel
+    FROM {catalog_name}.{schema_name}.parcel_h3_index
+""").first()
+
+print(f"H3 index created:")
+print(f"  Parcels indexed: {h3_stats['parcels_indexed']:,}")
+print(f"  Total cell rows: {h3_stats['total_cells']:,}")
+print(f"  Unique H3 cells: {h3_stats['unique_cells']:,}")
+print(f"  Avg cells/parcel: {h3_stats['avg_cells_per_parcel']}")
+
+# COMMAND ----------
+
+catalog_name = dbutils.widgets.get("catalog_name")
+schema_name = dbutils.widgets.get("schema_name")
+
+# ============================================================================
+# ADJACENCY ANALYSIS: H3 Pre-Filter + Exact Geometry Verification
+# ============================================================================
+# TWO-STAGE APPROACH:
 #
-# - ST_Boundary(geometry): Extracts the outline/perimeter of a parcel as a line
-# - ST_Intersects(geom1, geom2): TRUE if geometries overlap or touch
-# - ST_Intersection(geom1, geom2): Returns the geometry where two shapes meet
-# - ST_Length(geometry): Calculates the length of a line in meters
+# Stage 1 — H3 equi-join (fast):
+#   Join parcel_h3_index to itself on h3_cell. Parcels sharing at least one
+#   H3 cell are CANDIDATES for adjacency. This is a standard hash join,
+#   orders of magnitude faster than a cross-join with geometry predicate.
+#
+# Stage 2 — Exact geometry verification (precise):
+#   For candidate pairs, verify with ST_Intersects on actual EPSG:3111
+#   geometry, then compute shared boundary length with ST_Intersection.
 #
 # WHY THIS MATTERS FOR CONSOLIDATION:
 # - Longer shared boundaries = easier to merge (fewer complications)
 # - Same-zone neighbors = simpler planning approval process
-# - This finds all parcel pairs that could potentially be consolidated
-#
-# NOTE: CROSS JOIN compares every parcel to every other parcel - we use
-# filters to avoid duplicates and only keep pairs that actually touch.
+# - H3 pre-filter makes this tractable for ALL parcels, not just one LGA
 # ============================================================================
 spark.sql(f"""
     CREATE OR REPLACE TABLE {catalog_name}.{schema_name}.parcel_adjacency AS
-    WITH sample_parcels AS (
-        SELECT parcel_id, zone_code, geometry
-        FROM {catalog_name}.{schema_name}.parcel_geometric_features
-        WHERE lga_name = '{sample_lga}'
-          AND geometry IS NOT NULL
+    WITH h3_candidates AS (
+        -- Stage 1: Find candidate pairs via H3 cell overlap
+        SELECT DISTINCT
+            h1.parcel_id AS parcel_1,
+            h2.parcel_id AS parcel_2
+        FROM {catalog_name}.{schema_name}.parcel_h3_index h1
+        JOIN {catalog_name}.{schema_name}.parcel_h3_index h2
+            ON h1.h3_cell = h2.h3_cell
+            AND h1.parcel_id < h2.parcel_id
     )
+    -- Stage 2: Verify adjacency with exact geometry + compute shared boundary
     SELECT
-        p1.parcel_id AS parcel_1,
-        p2.parcel_id AS parcel_2,
-        p1.zone_code AS zone_1,
-        p2.zone_code AS zone_2,
-        -- Calculate shared boundary length
+        c.parcel_1,
+        c.parcel_2,
+        g1.zone_code AS zone_1,
+        g2.zone_code AS zone_2,
         -- Geometry is already in EPSG:3111 (VicGrid, metres) — no transform needed
         ROUND(
             ST_Length(
-                ST_Intersection(ST_Boundary(p1.geometry), ST_Boundary(p2.geometry))
+                ST_Intersection(ST_Boundary(g1.geometry), ST_Boundary(g2.geometry))
             ),
             2
         ) AS shared_boundary_m
-    FROM sample_parcels p1
-    CROSS JOIN sample_parcels p2
-    WHERE p1.parcel_id < p2.parcel_id  -- Avoid duplicates and self-comparison
-      AND ST_Intersects(p1.geometry, p2.geometry)
+    FROM h3_candidates c
+    JOIN {catalog_name}.{schema_name}.parcel_geometric_features g1 ON c.parcel_1 = g1.parcel_id
+    JOIN {catalog_name}.{schema_name}.parcel_geometric_features g2 ON c.parcel_2 = g2.parcel_id
+    WHERE ST_Intersects(g1.geometry, g2.geometry)
 """)
 
-print("Created parcel_adjacency table")
+adj_count = spark.sql(f"""
+    SELECT COUNT(*) AS cnt FROM {catalog_name}.{schema_name}.parcel_adjacency
+""").first()["cnt"]
+print(f"Created parcel_adjacency table: {adj_count:,} pairs")
+
 display(spark.sql(f"""
     SELECT * FROM {catalog_name}.{schema_name}.parcel_adjacency
     WHERE shared_boundary_m > 0
@@ -221,7 +251,7 @@ display(spark.sql(f"""
         COALESCE(a.adjacent_same_zone_count, 0) AS adjacent_same_zone_count
     FROM {catalog_name}.{schema_name}.parcel_geometric_features p
     LEFT JOIN adjacency_stats a ON p.parcel_id = a.parcel_id
-    WHERE p.lga_name = '{sample_lga}'
+    WHERE a.num_adjacent_parcels > 0
     ORDER BY total_shared_boundary_m DESC
     LIMIT 100
 """))
@@ -239,7 +269,8 @@ schema_name = dbutils.widgets.get("schema_name")
 # ============================================================================
 # EDGE TOPOLOGY TABLE: Comprehensive Boundary Analysis for Each Parcel
 # ============================================================================
-# This creates a full picture of each parcel's boundary relationships:
+# Creates a full picture of each parcel's boundary relationships for ALL
+# parcels (not scoped to a single LGA — made tractable by H3 pre-filtering).
 #
 # KEY METRICS EXPLAINED:
 #
@@ -350,7 +381,6 @@ spark.sql(f"""
 
     FROM {catalog_name}.{schema_name}.parcel_geometric_features p
     LEFT JOIN adjacency_stats a ON p.parcel_id = a.parcel_id
-    WHERE p.lga_name = '{sample_lga}'
 """)
 
 print("Created parcel_edge_topology table")
@@ -1208,8 +1238,17 @@ print(f"Retrieved {len(adjacency_3d)} parcels for 3D visualization")
 # MAGIC %md
 # MAGIC ## Summary
 # MAGIC
-# MAGIC This notebook computed the following edge topology features:
+# MAGIC This notebook uses the **H3 + Geometry hybrid join** pattern to compute edge topology
+# MAGIC features for **all parcels** (not scoped to a single LGA):
 # MAGIC
+# MAGIC ### H3 Hybrid Join Approach
+# MAGIC 1. **Tessellate** parcel polygons into H3 cells (resolution 10, ~65m hexagons)
+# MAGIC 2. **Equi-join** on H3 cell ID to find candidate neighbours (fast hash join)
+# MAGIC 3. **Verify** with exact `ST_Intersects` + compute shared boundary length
+# MAGIC
+# MAGIC This replaces the previous O(n²) CROSS JOIN that was limited to one LGA at a time.
+# MAGIC
+# MAGIC ### Features Computed
 # MAGIC | Feature | Description |
 # MAGIC |---------|-------------|
 # MAGIC | `num_adjacent_parcels` | Number of neighbouring parcels |
@@ -1222,15 +1261,17 @@ print(f"Retrieved {len(adjacency_3d)} parcels for 3D visualization")
 # MAGIC | `is_sliver` | Propagated from geometric features — data quality flag |
 # MAGIC | `hull_efficiency` | Propagated from geometric features — concavity measure |
 # MAGIC
-# MAGIC ### Key Spatial SQL Functions Used:
+# MAGIC ### Key Functions Used
+# MAGIC - `h3_tessellateaswkb(wkt, resolution)` - Tessellate polygon into H3 cells
 # MAGIC - `ST_Boundary(geometry)` - Get parcel boundary as linestring
 # MAGIC - `ST_Intersection(geom1, geom2)` - Get shared geometry
 # MAGIC - `ST_Intersects(geom1, geom2)` - Check if geometries intersect
 # MAGIC - `ST_Length(geometry)` - Calculate line length
 # MAGIC
 # MAGIC ### Output Tables
-# MAGIC - `parcel_adjacency` - Pairwise adjacency relationships
-# MAGIC - `parcel_edge_topology` - All edge topology features per parcel
+# MAGIC - `parcel_h3_index` - H3 cell index for spatial pre-filtering
+# MAGIC - `parcel_adjacency` - Pairwise adjacency relationships (all LGAs)
+# MAGIC - `parcel_edge_topology` - All edge topology features per parcel (all LGAs)
 # MAGIC
 # MAGIC ### Next Steps
 # MAGIC - **04_suitability_scoring.py** - Combine all features for multi-criteria scoring

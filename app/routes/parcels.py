@@ -74,7 +74,7 @@ async def parcels_geojson(
     lga: Optional[str] = Query(None),
     min_score: Optional[int] = Query(None),
     exclude_growth_areas: bool = Query(False),
-    limit: int = Query(2000, le=10000),
+    limit: int = Query(200000, le=200000),
 ):
     """Return parcels as GeoJSON FeatureCollection with polygon geometry."""
     conditions, params, idx = _build_filters(zone, tier, lga, min_score, exclude_growth_areas)

@@ -57,8 +57,8 @@ flowchart TB
             adj_pairs["adjacency_pairs<br/><i>Consolidation pair lookups</i>"]
         end
         subgraph appstack["Databricks App"]
-            fastapi["FastAPI Backend<br/><i>asyncpg + PostGIS queries</i>"]
-            deckgl["Deck.gl Frontend<br/><i>Interactive map viewer</i>"]
+            fastapi["FastAPI Backend<br/><i>asyncpg + PostGIS queries</i><br/><i>Server-side cache + ETag</i>"]
+            deckgl["Deck.gl Frontend<br/><i>GeoJSON polygon rendering</i><br/><i>Multi-select tier filter</i>"]
             fastapi --> deckgl
         end
         subgraph ai["AI Analysis"]

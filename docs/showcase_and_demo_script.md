@@ -109,13 +109,30 @@ vic-site-consolidation/
 |   +-- 02_geo_datasource_usage.py        # Examples with Natural Earth data
 |   +-- 03_spatial_sql_reference.py       # ST_* function cookbook
 |
-+-- land_parcel_analysis/              # Core analysis pipeline (6 notebooks)
-    +-- 01_data_ingestion.py              # Download + ingest all datasets
-    +-- 02_geometric_features.py          # Shape metrics for every parcel
-    +-- 03_edge_topology.py               # Adjacency + shared boundaries
-    +-- 03a_road_frontage_analysis.py     # Road frontage classification
-    +-- 03b_activity_centre_proximity.py  # Distance to activity centres
-    +-- 04_suitability_scoring.py         # Final scoring + ranking + viz
++-- land_parcel_analysis/              # Core analysis pipeline (7 notebooks)
+|   +-- 01_data_ingestion.py              # Download + ingest all datasets
+|   +-- 02_geometric_features.py          # Shape metrics for every parcel
+|   +-- 03_edge_topology.py               # Adjacency + shared boundaries
+|   +-- 03a_road_frontage_analysis.py     # Road frontage classification
+|   +-- 03b_activity_centre_proximity.py  # Distance to activity centres
+|   +-- 04_suitability_scoring.py         # Final scoring + ranking
+|   +-- 05_lakebase_sync.py              # Sync to Lakebase PostGIS
+|
++-- app/                               # Databricks App (visualization)
+|   +-- app.py                            # FastAPI backend
+|   +-- app.yaml                          # Databricks App config
+|   +-- db.py                             # asyncpg connection pool
+|   +-- models.py                         # Pydantic models
+|   +-- requirements.txt                  # Python dependencies
+|   +-- routes/                           # API route modules
+|   |   +-- parcels.py                    # Parcel endpoints + GeoJSON with caching
+|   |   +-- candidates.py                 # Consolidation candidate endpoints
+|   |   +-- stats.py                      # Aggregated statistics
+|   +-- static/
+|       +-- index.html                    # Deck.gl + MapLibre GL frontend
+|
++-- src/lakebase/
+    +-- setup.sql                         # PostGIS schema, views, indexes
 ```
 
 ---
@@ -512,10 +529,11 @@ Joins the adjacency table with scores to find the **best pairs** of adjacent par
 
 **Purpose:** Interactive visualization replacing in-notebook Folium/Kepler/PyDeck maps.
 
-**Architecture:** FastAPI backend + Deck.gl/MapLibre GL frontend
+**Architecture:** FastAPI backend (asyncpg + PostGIS) + Deck.gl/MapLibre GL frontend
 
 **API Endpoints:**
 - `GET /api/parcels` - List parcels with filters (zone, tier, LGA, min_score)
+- `GET /api/parcels/geojson` - Full polygon GeoJSON with server-side caching + ETag support
 - `GET /api/parcels/nearby?lat=&lng=&radius_km=` - PostGIS spatial proximity query
 - `GET /api/parcels/{id}` - Single parcel details with full geometry
 - `GET /api/candidates` - Top consolidation candidates (with growth-area exclusion option)
@@ -524,12 +542,19 @@ Joins the adjacency table with scores to find the **best pairs** of adjacent par
 - `GET /api/stats/lgas` - Summary statistics by LGA with growth-area flag
 - `GET /api/health` - Health check with count of synced candidates
 
+**GeoJSON Endpoint Details:**
+The `/api/parcels/geojson` endpoint reconstructs polygon geometry from WKT stored in Lakebase using `ST_AsGeoJSON(ST_GeomFromText(geometry_wkt, 4326))::json`. Responses are cached server-side (in-memory dict with 10-minute TTL) and support ETag/If-None-Match headers for browser caching, so subsequent loads of the same query return instantly with HTTP 304.
+
 **Frontend Features:**
-- Deck.gl ScatterplotLayer with parcels colored by suitability tier
-- Filter controls: tier, LGA, min score, exclude growth areas
-- Live statistics panel
-- Tooltip with parcel details on hover
-- Auto-fit viewport to filtered data
+- **Deck.gl GeoJsonLayer** rendering actual parcel polygons (not points) colored by suitability tier
+- **Multi-select tier dropdown** with colored dots per tier (checkbox-based, supports any combination)
+- **Display limit slider** (1K-170K) to control how many parcels are rendered
+- Filter controls: tier (multi-select), LGA, min score, exclude growth areas
+- **Dark basemap** (CARTO Dark Matter) with 45-degree pitch for immersive 3D view
+- ETag-based browser caching (sends `If-None-Match`, handles 304 responses)
+- Live statistics panel with tier distribution
+- Tooltip with parcel details on hover (ID, zone, LGA, area, score, tier, neighbors, PT distance)
+- Default loads all 167,948 parcels (~128MB GeoJSON)
 
 ---
 
@@ -547,6 +572,9 @@ Joins the adjacency table with scores to find the **best pairs** of adjacent par
 | **Weighted scoring over ML** | Transparent, interpretable, tuneable by domain experts without retraining |
 | **Growth-area constraints** | Customer feedback: high-scoring lots in growth LGAs are impractical for consolidation |
 | **Lakebase + App over in-notebook viz** | Faster, reusable, shareable; avoids slow Folium/Kepler rendering in notebooks |
+| **GeoJSON polygon rendering** | Shows actual parcel shapes (not just points), enabling visual assessment of lot shape and size |
+| **Server-side + ETag caching** | Full GeoJSON for 167K parcels is ~128MB; caching avoids re-querying PostGIS on every page load |
+| **Multi-select tier filter** | Users can compare specific tier combinations (e.g., Tier 1 + Tier 2) without loading all data |
 | **asyncpg + PostGIS GIST index** | Fast spatial proximity queries (~10ms for ST_DWithin within 1km) |
 | **Serverless + Environment v4** | Required for Spatial SQL ST_* functions; eliminates cluster management |
 | **32GB High Memory** | Spatial joins and cross-joins for adjacency are memory-intensive |

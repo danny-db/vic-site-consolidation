@@ -126,8 +126,14 @@ All Victorian government spatial data uses **VicGrid GDA94 (EPSG:3111)**, a proj
                             |
                             v
                +------------------------+
-               |  Visualisation         |  Folium, Kepler.gl, PyDeck
-               |  (Interactive Maps)    |  interactive web maps
+               |  Lakebase Sync         |  Sync Delta tables to PostGIS
+               |  (05_lakebase_sync)    |  for low-latency spatial serving
+               +------------------------+
+                            |
+                            v
+               +------------------------+
+               |  Databricks App        |  FastAPI + Deck.gl
+               |  (Interactive Maps)    |  Polygon rendering + caching
                +------------------------+
 ```
 
@@ -139,20 +145,43 @@ All Victorian government spatial data uses **VicGrid GDA94 (EPSG:3111)**, a proj
 vic-site-consolidation/
 ├── README.md
 ├── CLAUDE.md                              # AI assistant context (domain guide + dataset inventory)
+├── databricks.yml                         # Databricks Asset Bundles config (job DAG)
 ├── geo_datasource/                        # Custom PySpark geospatial data source
 │   ├── README.md
 │   ├── 01_geo_datasource_definition.py    # DataSource registration (run first)
 │   ├── 02_geo_datasource_usage.py         # Usage examples
 │   └── 03_spatial_sql_reference.py        # Spatial SQL function reference
 │
-└── land_parcel_analysis/                  # Core analysis pipeline
-    ├── README.md
-    ├── 01_data_ingestion.py               # Ingest Vicmap + PT data into Unity Catalog
-    ├── 02_geometric_features.py           # Compute parcel shape metrics
-    ├── 03_edge_topology.py                # Compute adjacency + shared boundaries
-    ├── 03a_road_frontage_analysis.py      # Road frontage classification
-    ├── 03b_activity_centre_proximity.py   # Activity Centre distance scoring
-    └── 04_suitability_scoring.py          # Final multi-criteria scoring model
+├── land_parcel_analysis/                  # Core analysis pipeline
+│   ├── README.md
+│   ├── 01_data_ingestion.py               # Ingest Vicmap + PT data into Unity Catalog
+│   ├── 02_geometric_features.py           # Compute parcel shape metrics
+│   ├── 03_edge_topology.py                # Compute adjacency + shared boundaries
+│   ├── 03a_road_frontage_analysis.py      # Road frontage classification
+│   ├── 03b_activity_centre_proximity.py   # Activity Centre distance scoring
+│   ├── 04_suitability_scoring.py          # Final multi-criteria scoring model
+│   └── 05_lakebase_sync.py               # Sync results to Lakebase PostGIS
+│
+├── app/                                   # Databricks App (interactive visualization)
+│   ├── app.py                             # FastAPI backend
+│   ├── app.yaml                           # Databricks App config (uvicorn + env vars)
+│   ├── db.py                              # asyncpg connection pool with SSL
+│   ├── models.py                          # Pydantic response models
+│   ├── requirements.txt                   # Python dependencies
+│   ├── routes/
+│   │   ├── parcels.py                     # Parcel endpoints + GeoJSON with caching
+│   │   ├── candidates.py                  # Consolidation candidate endpoints
+│   │   └── stats.py                       # Aggregated statistics
+│   └── static/
+│       └── index.html                     # Deck.gl + MapLibre GL frontend
+│
+├── src/lakebase/
+│   └── setup.sql                          # PostGIS schema, views, spatial indexes
+│
+└── docs/                                  # Documentation and diagrams
+    ├── architecture.mmd                   # Architecture diagram (Mermaid)
+    ├── pipeline_dag.mmd                   # Pipeline DAG (Mermaid)
+    └── showcase_and_demo_script.md        # Demo script and walkthrough
 ```
 
 All `.py` files are **Databricks notebooks** (using `# Databricks notebook source` and `# MAGIC %md` conventions). Import them into your Databricks workspace to run.
@@ -226,8 +255,21 @@ Import the notebooks into your Databricks workspace and run in order:
 | 3a | `land_parcel_analysis/03a_road_frontage_analysis.py` | Classifies road frontages | 5-10 min |
 | 3b | `land_parcel_analysis/03b_activity_centre_proximity.py` | Distances to activity centres | 5-10 min |
 | 4 | `land_parcel_analysis/04_suitability_scoring.py` | Generates scored + ranked output | 5-10 min |
+| 5 | `land_parcel_analysis/05_lakebase_sync.py` | Syncs results to Lakebase PostGIS | 1-2 min |
 
 *Edge topology uses a cross-join filtered by `ST_Intersects`, which is computationally intensive. Processing is scoped to one LGA at a time for manageability.
+
+**Automated execution via Databricks Asset Bundles:**
+
+```bash
+# Deploy the pipeline job
+databricks bundle deploy --profile=<your-profile>
+
+# Run the full pipeline (02 → 03 → 03a+03b → 04 → 05)
+databricks bundle run land_parcel_analysis --profile=<your-profile>
+```
+
+Stages 3a and 3b run **in parallel** after edge topology completes.
 
 ---
 
@@ -460,26 +502,36 @@ The pipeline produces these Delta tables in Unity Catalog:
 
 ---
 
-## Visualization
+## Serving Layer: Lakebase + Databricks App
 
-Three visualisation libraries are demonstrated, each with different strengths:
+The pipeline results are synced to **Lakebase** (managed PostGIS on Databricks) for low-latency spatial serving via a **Databricks App**.
 
-| Library | Best For | How to Render in Databricks |
-|---------|----------|----------------------------|
-| **Folium** | Interactive polygon maps with tooltips | `displayHTML(m._repr_html_())` |
-| **Kepler.gl** | Large dataset exploration and filtering | Save to UC Volume as HTML |
-| **PyDeck** | 3D visualisations and column charts | `display(deck)` |
+### Lakebase (PostGIS)
+- **Autoscaling** project (0.5-2 CU) with PostGIS extension enabled
+- Spatial views with `ST_GeomFromText` + GIST indexes for fast proximity queries
+- Native Postgres role for app authentication (no OAuth token refresh)
+- 167,948 candidates + 16,043 consolidation pairs synced via Sync Tables
 
-All visualisations require geometry in WGS84:
+### Databricks App
+- **Backend**: FastAPI + asyncpg with PostGIS spatial queries
+- **Frontend**: Deck.gl GeoJsonLayer + MapLibre GL on dark basemap
+- **Key features**:
+  - Renders actual parcel **polygons** (not points) colored by suitability tier
+  - **Multi-select tier dropdown** with colored dots per tier
+  - **Display limit slider** (1K-170K parcels)
+  - **Server-side caching** (in-memory dict, 10-min TTL) + **ETag/If-None-Match** browser caching
+  - Filters: tier (multi-select), LGA, min score, exclude growth areas
+  - Tooltip with parcel details on hover
+  - Default loads all 167,948 parcels
 
-```sql
-SELECT
-    parcel_id,
-    suitability_score,
-    ST_AsGeoJSON(ST_Transform(geometry, 4326)) AS geojson
-FROM consolidation_candidates
-WHERE suitability_tier = 'Excellent'
-LIMIT 500;
+### Deploying the App
+
+```bash
+# Upload app files to workspace
+databricks workspace import-dir app /Workspace/Users/<user>/vic-site-consolidation-app --overwrite --profile=<profile>
+
+# Deploy the app
+databricks apps deploy vic-site-consolidation --source-code-path /Workspace/Users/<user>/vic-site-consolidation-app --profile=<profile>
 ```
 
 ---
@@ -497,6 +549,10 @@ LIMIT 500;
 | **Broadcast joins for PT stops** | PT stops (~10K records) are small enough to broadcast to all executors |
 | **Custom DataSource over GeoPandas** | Fiona-based streaming reads are more memory-efficient for large shapefiles |
 | **Weighted scoring over ML** | Transparent, interpretable, and tuneable by domain experts |
+| **Growth-area constraints** | Customer feedback: high-scoring lots in growth LGAs are impractical for consolidation |
+| **Lakebase + App over in-notebook viz** | Faster, reusable, shareable; avoids slow Folium/Kepler rendering in notebooks |
+| **GeoJSON polygon rendering** | Shows actual parcel shapes, enabling visual assessment of lot shape and size |
+| **Server-side + ETag caching** | 167K parcels = ~128MB GeoJSON; caching avoids re-querying PostGIS on every page load |
 
 ---
 

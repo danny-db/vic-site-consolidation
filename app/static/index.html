@@ -19,7 +19,7 @@
         }
         h1 { font-size: 16px; margin-bottom: 12px; color: #1a1a2e; }
         .filter-group { margin-bottom: 10px; }
-        .filter-group label { display: block; font-size: 11px; font-weight: 600; color: #666; margin-bottom: 3px; text-transform: uppercase; }
+        .filter-group > label { display: block; font-size: 11px; font-weight: 600; color: #666; margin-bottom: 3px; text-transform: uppercase; }
         select, input[type="number"] { width: 100%; padding: 6px 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px; }
         input[type="range"] { width: 100%; margin-top: 4px; accent-color: #1a73e8; }
         .range-labels { display: flex; justify-content: space-between; font-size: 10px; color: #999; margin-top: 2px; }
@@ -42,6 +42,31 @@
                             border-top-color: #1a73e8; border-radius: 50%; animation: spin 0.8s linear infinite;
                             margin-right: 10px; vertical-align: middle; }
         @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* Multi-select dropdown */
+        .multi-select { position: relative; }
+        .multi-select-btn {
+            width: 100%; padding: 6px 8px; border: 1px solid #ddd; border-radius: 4px;
+            font-size: 13px; background: white; cursor: pointer; text-align: left;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .multi-select-btn::after { content: '\25BC'; font-size: 9px; color: #999; margin-left: 6px; flex-shrink: 0; }
+        .multi-select-btn.open::after { content: '\25B2'; }
+        .multi-select-dropdown {
+            display: none; position: absolute; top: 100%; left: 0; right: 0;
+            background: white; border: 1px solid #ddd; border-top: none;
+            border-radius: 0 0 4px 4px; z-index: 10; max-height: 200px; overflow-y: auto;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        .multi-select-dropdown.open { display: block; }
+        .multi-select-dropdown label {
+            display: flex; align-items: center; gap: 6px; padding: 6px 8px;
+            font-size: 12px; cursor: pointer; text-transform: none; font-weight: normal;
+        }
+        .multi-select-dropdown label:hover { background: #f5f5f5; }
+        .multi-select-dropdown input[type="checkbox"] { margin: 0; }
+        .tier-dot { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
     </style>
 </head>
 <body>
@@ -57,14 +82,16 @@
         </div>
         <div class="filter-group">
             <label>Suitability Tier</label>
-            <select id="tierFilter">
-                <option value="">All Tiers</option>
-                <option value="Tier 1 - Excellent">Tier 1 - Excellent</option>
-                <option value="Tier 2 - Very Good">Tier 2 - Very Good</option>
-                <option value="Tier 3 - Good">Tier 3 - Good</option>
-                <option value="Tier 4 - Moderate">Tier 4 - Moderate</option>
-                <option value="Tier 5 - Low">Tier 5 - Low</option>
-            </select>
+            <div class="multi-select" id="tierMultiSelect">
+                <div class="multi-select-btn" id="tierBtn">All Tiers</div>
+                <div class="multi-select-dropdown" id="tierDropdown">
+                    <label><input type="checkbox" value="Tier 1 - Excellent" class="tier-cb" /><span class="tier-dot" style="background:#d7191c"></span>Tier 1 - Excellent</label>
+                    <label><input type="checkbox" value="Tier 2 - Very Good" class="tier-cb" /><span class="tier-dot" style="background:#fdae61"></span>Tier 2 - Very Good</label>
+                    <label><input type="checkbox" value="Tier 3 - Good" class="tier-cb" /><span class="tier-dot" style="background:#fee08b"></span>Tier 3 - Good</label>
+                    <label><input type="checkbox" value="Tier 4 - Moderate" class="tier-cb" /><span class="tier-dot" style="background:#a6d96a"></span>Tier 4 - Moderate</label>
+                    <label><input type="checkbox" value="Tier 5 - Low" class="tier-cb" /><span class="tier-dot" style="background:#1a9641"></span>Tier 5 - Low</label>
+                </div>
+            </div>
         </div>
         <div class="filter-group">
             <label>LGA</label>
@@ -105,8 +132,38 @@
         const TOTAL_PARCELS = 167948;
         let deckgl = null;
         let geojsonData = null;
+        let lastEtag = null;
 
-        // Slider label update
+        /* --- Multi-select tier dropdown --- */
+        const tierBtn = document.getElementById('tierBtn');
+        const tierDropdown = document.getElementById('tierDropdown');
+        const tierCheckboxes = document.querySelectorAll('.tier-cb');
+
+        tierBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            tierBtn.classList.toggle('open');
+            tierDropdown.classList.toggle('open');
+        });
+        document.addEventListener('click', () => {
+            tierBtn.classList.remove('open');
+            tierDropdown.classList.remove('open');
+        });
+        tierDropdown.addEventListener('click', (e) => e.stopPropagation());
+
+        function getSelectedTiers() {
+            return Array.from(tierCheckboxes).filter(cb => cb.checked).map(cb => cb.value);
+        }
+
+        tierCheckboxes.forEach(cb => {
+            cb.addEventListener('change', () => {
+                const sel = getSelectedTiers();
+                tierBtn.textContent = sel.length === 0 ? 'All Tiers'
+                    : sel.length <= 2 ? sel.map(s => s.replace('Tier ', 'T')).join(', ')
+                    : `${sel.length} tiers selected`;
+            });
+        });
+
+        /* --- Limit slider --- */
         const limitSlider = document.getElementById('limitSlider');
         const limitValue = document.getElementById('limitValue');
         limitSlider.addEventListener('input', () => {
@@ -114,15 +171,16 @@
             limitValue.textContent = v >= TOTAL_PARCELS ? 'All' : v.toLocaleString();
         });
 
+        /* --- Data loading with ETag caching --- */
         async function loadData() {
-            const tier = document.getElementById('tierFilter').value;
+            const tiers = getSelectedTiers();
             const lga = document.getElementById('lgaFilter').value;
             const minScore = document.getElementById('minScore').value;
             const excludeGrowth = document.getElementById('excludeGrowth').checked;
             const limit = parseInt(limitSlider.value);
 
             const params = new URLSearchParams();
-            if (tier) params.set('tier', tier);
+            tiers.forEach(t => params.append('tier', t));
             if (lga) params.set('lga', lga);
             if (minScore && parseInt(minScore) !== 0) params.set('min_score', minScore);
             if (excludeGrowth) params.set('exclude_growth_areas', 'true');
@@ -135,7 +193,22 @@
                 loading.style.display = 'block';
                 loading.innerHTML = `<span class="spinner"></span>Loading ${limit >= TOTAL_PARCELS ? 'all' : limit.toLocaleString()} parcels...`;
 
-                const resp = await fetch(url);
+                const headers = {};
+                if (lastEtag) headers['If-None-Match'] = lastEtag;
+
+                const resp = await fetch(url, { headers });
+
+                if (resp.status === 304) {
+                    // Data unchanged — reuse cached geojsonData
+                    loading.style.display = 'none';
+                    updateMap();
+                    updateStats();
+                    return;
+                }
+
+                const etag = resp.headers.get('ETag');
+                if (etag) lastEtag = etag;
+
                 geojsonData = await resp.json();
                 updateMap();
                 updateStats();
@@ -165,10 +238,7 @@
                 highlightColor: [255, 255, 255, 100],
             });
 
-            const features = geojsonData.features || [];
-
             if (!deckgl) {
-                // Initial view: show all of Casey LGA at an immersive tilt
                 deckgl = new deck.DeckGL({
                     container: 'map',
                     mapStyle: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',

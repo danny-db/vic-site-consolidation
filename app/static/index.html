@@ -171,8 +171,11 @@
             limitValue.textContent = v >= TOTAL_PARCELS ? 'All' : v.toLocaleString();
         });
 
-        /* --- Data loading with ETag caching --- */
-        async function loadData() {
+        /* --- Data loading with NDJSON streaming --- */
+        let lastParamsStr = null;
+        let streamAbortController = null;
+
+        function buildParams() {
             const tiers = getSelectedTiers();
             const lga = document.getElementById('lgaFilter').value;
             const minScore = document.getElementById('minScore').value;
@@ -185,37 +188,89 @@
             if (minScore && parseInt(minScore) !== 0) params.set('min_score', minScore);
             if (excludeGrowth) params.set('exclude_growth_areas', 'true');
             params.set('limit', String(limit));
+            return params;
+        }
 
-            const url = `/api/parcels/geojson?${params}`;
+        async function loadData() {
+            const params = buildParams();
+            const paramsStr = params.toString();
 
-            try {
-                const loading = document.getElementById('loading');
-                loading.style.display = 'block';
-                loading.innerHTML = `<span class="spinner"></span>Loading ${limit >= TOTAL_PARCELS ? 'all' : limit.toLocaleString()} parcels...`;
-
-                const headers = {};
-                if (lastEtag) headers['If-None-Match'] = lastEtag;
-
-                const resp = await fetch(url, { headers });
-
-                if (resp.status === 304) {
-                    // Data unchanged — reuse cached geojsonData
-                    loading.style.display = 'none';
-                    updateMap();
-                    updateStats();
-                    return;
-                }
-
-                const etag = resp.headers.get('ETag');
-                if (etag) lastEtag = etag;
-
-                geojsonData = await resp.json();
+            // Client-side cache: same filters → reuse instantly
+            if (paramsStr === lastParamsStr && geojsonData) {
                 updateMap();
                 updateStats();
-                loading.style.display = 'none';
+                return;
+            }
+
+            // Abort any in-flight stream
+            if (streamAbortController) {
+                streamAbortController.abort();
+            }
+            streamAbortController = new AbortController();
+
+            lastParamsStr = paramsStr;
+            const loading = document.getElementById('loading');
+            loading.style.display = 'block';
+            loading.innerHTML = '<span class="spinner"></span>Streaming parcels...';
+
+            try {
+                const resp = await fetch(`/api/parcels/geojson/stream?${params}`, {
+                    signal: streamAbortController.signal,
+                });
+                const reader = resp.body.getReader();
+                const decoder = new TextDecoder();
+
+                let buffer = '';
+                let features = [];
+                let lastRenderCount = 0;
+                const startTime = performance.now();
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop(); // keep incomplete last line
+
+                    for (const line of lines) {
+                        if (!line.trim()) continue;
+                        const parsed = JSON.parse(line);
+                        if (parsed._meta) continue; // skip metadata line
+                        features.push(parsed);
+                    }
+
+                    // Adaptive batch rendering: fast at start, fewer updates later
+                    const count = features.length;
+                    const batch = count < 2000 ? 500
+                                : count < 10000 ? 2000
+                                : 5000;
+                    if (count - lastRenderCount >= batch) {
+                        geojsonData = { type: 'FeatureCollection', features };
+                        updateMap();
+                        const elapsed = ((performance.now() - startTime) / 1000).toFixed(1);
+                        loading.innerHTML = `<span class="spinner"></span>${count.toLocaleString()} parcels (${elapsed}s)`;
+                        lastRenderCount = count;
+                    }
+                }
+
+                // Process remaining buffer
+                if (buffer.trim()) {
+                    const parsed = JSON.parse(buffer);
+                    if (!parsed._meta) features.push(parsed);
+                }
+
+                // Final render
+                geojsonData = { type: 'FeatureCollection', features };
+                updateMap();
+                updateStats();
+                const totalTime = ((performance.now() - startTime) / 1000).toFixed(1);
+                loading.innerHTML = `${features.length.toLocaleString()} parcels loaded in ${totalTime}s`;
+                setTimeout(() => { loading.style.display = 'none'; }, 1500);
             } catch (err) {
+                if (err.name === 'AbortError') return; // cancelled by new request
                 console.error('Failed to load data:', err);
-                document.getElementById('loading').innerHTML = 'Error loading data. Check API connection.';
+                loading.innerHTML = 'Error loading data. Check API connection.';
             }
         }
 

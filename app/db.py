@@ -101,6 +101,27 @@ async def fetch_all(query: str, *args) -> list[dict]:
             return [dict(row) for row in rows]
 
 
+async def fetch_stream(query: str, *args):
+    """Async generator yielding rows one at a time using a DB cursor.
+
+    Uses prefetch=5000 to batch round-trips while keeping memory low.
+    """
+    pool = await get_pool()
+    try:
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                async for record in conn.cursor(query, *args, prefetch=5000):
+                    yield dict(record)
+    except asyncpg.exceptions.InvalidPasswordError:
+        logger.warning("Token expired, refreshing pool for stream...")
+        await _refresh_pool()
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                async for record in conn.cursor(query, *args, prefetch=5000):
+                    yield dict(record)
+
+
 async def fetch_one(query: str, *args) -> dict | None:
     """Execute a query and return a single row as a dict."""
     pool = await get_pool()

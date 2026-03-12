@@ -3,9 +3,9 @@ import json
 import hashlib
 import time
 from fastapi import APIRouter, Query, HTTPException, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from typing import Optional, List
-from db import fetch_all, fetch_one
+from db import fetch_all, fetch_one, fetch_stream
 from models import Parcel, ParcelDetail
 
 router = APIRouter(prefix="/api/parcels", tags=["parcels"])
@@ -171,6 +171,65 @@ async def parcels_geojson(
         content=body_bytes,
         media_type="application/json",
         headers={"ETag": etag, "Cache-Control": "private, max-age=300"},
+    )
+
+
+@router.get("/geojson/stream")
+async def parcels_geojson_stream(
+    zone: Optional[str] = Query(None),
+    tier: Optional[List[str]] = Query(None, description="Tier filter (repeatable)"),
+    lga: Optional[str] = Query(None),
+    min_score: Optional[int] = Query(None),
+    exclude_growth_areas: bool = Query(False),
+    limit: int = Query(200000, le=200000),
+):
+    """Stream parcels as newline-delimited GeoJSON Features (NDJSON).
+
+    Each line is a complete GeoJSON Feature object. The frontend reads
+    the stream progressively and renders parcels as they arrive, giving
+    immediate visual feedback instead of waiting for the full download.
+    """
+    conditions, params, idx = _build_filters(zone, tier, lga, min_score, exclude_growth_areas)
+    where = "WHERE geometry_wkt IS NOT NULL"
+    if conditions:
+        where += " AND " + " AND ".join(conditions)
+    params.append(limit)
+
+    query = f"""
+        SELECT parcel_id, plan_number, lot_number, zone_code, lga_name,
+               centroid_lon, centroid_lat, area_sqm, compactness_index,
+               num_adjacent_parcels, nearest_any_pt_m, is_growth_area_lga,
+               lots_in_plan, opportunity_score, constraint_score,
+               suitability_score, suitability_tier, rank,
+               ST_AsGeoJSON(ST_GeomFromText(geometry_wkt, 4326))::json AS geojson
+        FROM consolidation_candidates_sync
+        {where}
+        ORDER BY suitability_score DESC
+        LIMIT ${idx}
+    """
+
+    async def generate():
+        count = 0
+        async for row in fetch_stream(query, *params):
+            geojson = row.pop("geojson", None)
+            if geojson is None:
+                continue
+            if isinstance(geojson, str):
+                geojson = json.loads(geojson)
+            feature = {
+                "type": "Feature",
+                "geometry": geojson,
+                "properties": row,
+            }
+            yield json.dumps(feature, separators=(",", ":")) + "\n"
+            count += 1
+        # Final metadata line so frontend knows the stream is complete
+        yield json.dumps({"_meta": True, "count": count}, separators=(",", ":")) + "\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="application/x-ndjson",
+        headers={"Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff"},
     )
 
 

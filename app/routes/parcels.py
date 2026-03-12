@@ -1,5 +1,7 @@
 """Parcel API endpoints."""
+import json
 from fastapi import APIRouter, Query, HTTPException
+from fastapi.responses import JSONResponse
 from typing import Optional
 from db import fetch_all, fetch_one
 from models import Parcel, ParcelDetail
@@ -15,20 +17,11 @@ PARCEL_COLUMNS = """
 """
 
 
-@router.get("", response_model=list[Parcel])
-async def list_parcels(
-    zone: Optional[str] = Query(None, description="Filter by zone_code"),
-    tier: Optional[str] = Query(None, description="Filter by suitability_tier"),
-    lga: Optional[str] = Query(None, description="Filter by lga_name"),
-    min_score: Optional[int] = Query(None, description="Minimum suitability score"),
-    limit: int = Query(1000, le=5000),
-    offset: int = Query(0, ge=0),
-):
-    """List parcels with optional filters."""
+def _build_filters(zone, tier, lga, min_score, exclude_growth_areas=False):
+    """Build WHERE conditions and params from filter arguments."""
     conditions = []
     params = []
     idx = 1
-
     if zone:
         conditions.append(f"zone_code = ${idx}")
         params.append(zone)
@@ -45,7 +38,22 @@ async def list_parcels(
         conditions.append(f"suitability_score >= ${idx}")
         params.append(min_score)
         idx += 1
+    if exclude_growth_areas:
+        conditions.append("is_growth_area_lga = false")
+    return conditions, params, idx
 
+
+@router.get("", response_model=list[Parcel])
+async def list_parcels(
+    zone: Optional[str] = Query(None, description="Filter by zone_code"),
+    tier: Optional[str] = Query(None, description="Filter by suitability_tier"),
+    lga: Optional[str] = Query(None, description="Filter by lga_name"),
+    min_score: Optional[int] = Query(None, description="Minimum suitability score"),
+    limit: int = Query(1000, le=5000),
+    offset: int = Query(0, ge=0),
+):
+    """List parcels with optional filters."""
+    conditions, params, idx = _build_filters(zone, tier, lga, min_score)
     where = "WHERE " + " AND ".join(conditions) if conditions else ""
     params.extend([limit, offset])
 
@@ -57,6 +65,56 @@ async def list_parcels(
         LIMIT ${idx} OFFSET ${idx + 1}
     """
     return await fetch_all(query, *params)
+
+
+@router.get("/geojson")
+async def parcels_geojson(
+    zone: Optional[str] = Query(None),
+    tier: Optional[str] = Query(None),
+    lga: Optional[str] = Query(None),
+    min_score: Optional[int] = Query(None),
+    exclude_growth_areas: bool = Query(False),
+    limit: int = Query(2000, le=10000),
+):
+    """Return parcels as GeoJSON FeatureCollection with polygon geometry."""
+    conditions, params, idx = _build_filters(zone, tier, lga, min_score, exclude_growth_areas)
+    where = "WHERE geometry_wkt IS NOT NULL"
+    if conditions:
+        where += " AND " + " AND ".join(conditions)
+    params.append(limit)
+
+    query = f"""
+        SELECT parcel_id, plan_number, lot_number, zone_code, lga_name,
+               centroid_lon, centroid_lat, area_sqm, compactness_index,
+               num_adjacent_parcels, nearest_any_pt_m, is_growth_area_lga,
+               lots_in_plan, opportunity_score, constraint_score,
+               suitability_score, suitability_tier, rank,
+               ST_AsGeoJSON(ST_GeomFromText(geometry_wkt, 4326))::json AS geojson
+        FROM consolidation_candidates_sync
+        {where}
+        ORDER BY suitability_score DESC
+        LIMIT ${idx}
+    """
+    rows = await fetch_all(query, *params)
+
+    features = []
+    for row in rows:
+        geojson = row.pop("geojson", None)
+        if geojson is None:
+            continue
+        # geojson comes back as a dict from asyncpg json cast
+        if isinstance(geojson, str):
+            geojson = json.loads(geojson)
+        features.append({
+            "type": "Feature",
+            "geometry": geojson,
+            "properties": row,
+        })
+
+    return JSONResponse({
+        "type": "FeatureCollection",
+        "features": features,
+    })
 
 
 @router.get("/nearby", response_model=list[Parcel])

@@ -30,12 +30,6 @@
         #legend { margin-top: 12px; }
         .legend-item { display: flex; align-items: center; font-size: 11px; padding: 2px 0; }
         .legend-dot { width: 14px; height: 14px; border-radius: 2px; margin-right: 6px; flex-shrink: 0; }
-        #tooltip {
-            position: absolute; z-index: 2; pointer-events: none;
-            background: rgba(0,0,0,0.85); color: white; padding: 10px 14px;
-            border-radius: 6px; font-size: 12px; max-width: 300px;
-            display: none; line-height: 1.5;
-        }
         .checkbox-group { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
         .checkbox-group label { font-size: 12px; text-transform: none; font-weight: normal; }
         #loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
@@ -85,7 +79,6 @@
             <div class="legend-item"><div class="legend-dot" style="background:#1a9641"></div>Tier 5 - Low</div>
         </div>
     </div>
-    <div id="tooltip"></div>
 
     <script>
         const TIER_COLORS = {
@@ -97,7 +90,7 @@
         };
 
         let deckgl = null;
-        let allData = [];
+        let geojsonData = null;
 
         async function loadData() {
             const tier = document.getElementById('tierFilter').value;
@@ -112,12 +105,13 @@
             if (excludeGrowth) params.set('exclude_growth_areas', 'true');
             params.set('limit', '5000');
 
-            const endpoint = excludeGrowth ? '/api/candidates' : '/api/parcels';
-            const url = `${endpoint}?${params}`;
+            const url = `/api/parcels/geojson?${params}`;
 
             try {
+                document.getElementById('loading').style.display = 'block';
+                document.getElementById('loading').textContent = 'Loading parcels...';
                 const resp = await fetch(url);
-                allData = await resp.json();
+                geojsonData = await resp.json();
                 updateMap();
                 updateStats();
                 document.getElementById('loading').style.display = 'none';
@@ -128,46 +122,56 @@
         }
 
         function updateMap() {
-            const layer = new deck.ScatterplotLayer({
+            const layer = new deck.GeoJsonLayer({
                 id: 'parcels',
-                data: allData,
-                getPosition: d => [d.centroid_lon, d.centroid_lat],
-                getRadius: d => Math.max(5, Math.sqrt(d.area_sqm || 100) * 0.5),
-                getFillColor: d => TIER_COLORS[d.suitability_tier] || [128, 128, 128],
-                getLineColor: [60, 60, 60],
-                lineWidthMinPixels: 0.5,
+                data: geojsonData,
+                filled: true,
                 stroked: true,
+                getFillColor: f => {
+                    const color = TIER_COLORS[f.properties.suitability_tier] || [128, 128, 128];
+                    return [...color, 180];
+                },
+                getLineColor: [40, 40, 40, 200],
+                getLineWidth: 1,
+                lineWidthMinPixels: 0.5,
+                lineWidthMaxPixels: 2,
                 pickable: true,
-                radiusMinPixels: 3,
-                radiusMaxPixels: 30,
-                opacity: 0.8,
+                autoHighlight: true,
+                highlightColor: [255, 255, 255, 100],
             });
 
+            const features = geojsonData.features || [];
+
             if (!deckgl) {
+                const firstCoord = features.length > 0
+                    ? [features[0].properties.centroid_lon, features[0].properties.centroid_lat]
+                    : [145.0, -37.8];
+
                 deckgl = new deck.DeckGL({
                     container: 'map',
                     mapStyle: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
                     initialViewState: {
-                        longitude: allData.length ? allData[0].centroid_lon : 145.0,
-                        latitude: allData.length ? allData[0].centroid_lat : -37.8,
-                        zoom: 13,
+                        longitude: firstCoord[0],
+                        latitude: firstCoord[1],
+                        zoom: 14,
                         pitch: 0,
                     },
                     controller: true,
                     layers: [layer],
                     getTooltip: ({object}) => {
-                        if (!object) return null;
+                        if (!object || !object.properties) return null;
+                        const p = object.properties;
                         return {
                             html: `
-                                <b>${object.parcel_id}</b><br/>
-                                Zone: ${object.zone_code || 'N/A'}<br/>
-                                LGA: ${object.lga_name || 'N/A'}<br/>
-                                Area: ${(object.area_sqm || 0).toFixed(0)} sqm<br/>
-                                Score: <b>${object.suitability_score}</b><br/>
-                                Tier: ${object.suitability_tier}<br/>
-                                Neighbors: ${object.num_adjacent_parcels || 0}<br/>
-                                Nearest PT: ${(object.nearest_any_pt_m || 0).toFixed(0)}m
-                                ${object.is_growth_area_lga ? '<br/><span style="color:#ff9800">Growth Area LGA</span>' : ''}
+                                <b>${p.parcel_id}</b><br/>
+                                Zone: ${p.zone_code || 'N/A'}<br/>
+                                LGA: ${p.lga_name || 'N/A'}<br/>
+                                Area: ${(p.area_sqm || 0).toFixed(0)} sqm<br/>
+                                Score: <b>${p.suitability_score}</b><br/>
+                                Tier: ${p.suitability_tier}<br/>
+                                Neighbors: ${p.num_adjacent_parcels || 0}<br/>
+                                Nearest PT: ${(p.nearest_any_pt_m || 0).toFixed(0)}m
+                                ${p.is_growth_area_lga ? '<br/><span style="color:#ff9800">Growth Area LGA</span>' : ''}
                             `,
                             style: { backgroundColor: 'rgba(0,0,0,0.85)', color: 'white', fontSize: '12px', padding: '10px 14px', borderRadius: '6px' }
                         };
@@ -178,9 +182,9 @@
             }
 
             // Auto-fit to data bounds
-            if (allData.length > 0) {
-                const lons = allData.map(d => d.centroid_lon);
-                const lats = allData.map(d => d.centroid_lat);
+            if (features.length > 0) {
+                const lons = features.map(f => f.properties.centroid_lon);
+                const lats = features.map(f => f.properties.centroid_lat);
                 const centerLon = (Math.min(...lons) + Math.max(...lons)) / 2;
                 const centerLat = (Math.min(...lats) + Math.max(...lats)) / 2;
                 const lonSpan = Math.max(...lons) - Math.min(...lons);
@@ -202,15 +206,17 @@
 
         function updateStats() {
             const panel = document.getElementById('statsPanel');
-            const total = allData.length;
+            const features = geojsonData.features || [];
+            const total = features.length;
             const tiers = {};
-            allData.forEach(d => {
-                tiers[d.suitability_tier] = (tiers[d.suitability_tier] || 0) + 1;
+            features.forEach(f => {
+                const t = f.properties.suitability_tier;
+                tiers[t] = (tiers[t] || 0) + 1;
             });
             const avgScore = total > 0
-                ? (allData.reduce((s, d) => s + (d.suitability_score || 0), 0) / total).toFixed(1)
+                ? (features.reduce((s, f) => s + (f.properties.suitability_score || 0), 0) / total).toFixed(1)
                 : 0;
-            const growthCount = allData.filter(d => d.is_growth_area_lga).length;
+            const growthCount = features.filter(f => f.properties.is_growth_area_lga).length;
 
             panel.innerHTML = `
                 <div class="stat-row"><span class="stat-label">Parcels shown</span><span class="stat-value">${total.toLocaleString()}</span></div>
@@ -220,13 +226,10 @@
             `;
         }
 
-        // Load LGA options and tier stats on startup
+        // Load LGA options on startup
         async function init() {
             try {
-                const [lgaResp, tierResp] = await Promise.all([
-                    fetch('/api/stats/lgas'),
-                    fetch('/api/stats/tiers'),
-                ]);
+                const lgaResp = await fetch('/api/stats/lgas');
                 const lgas = await lgaResp.json();
                 const lgaSelect = document.getElementById('lgaFilter');
                 lgas.forEach(l => {

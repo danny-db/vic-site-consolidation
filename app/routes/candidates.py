@@ -1,8 +1,8 @@
 """Consolidation candidate endpoints."""
 from fastapi import APIRouter, Query
 from typing import Optional
-from ..db import fetch_all
-from ..models import Parcel, ConsolidationPair
+from db import fetch_all
+from models import Parcel, ConsolidationPair
 
 router = APIRouter(prefix="/api/candidates", tags=["candidates"])
 

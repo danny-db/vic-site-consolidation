@@ -1,6 +1,6 @@
 command:
   - uvicorn
-  - app.app:app
+  - app:app
   - --host
   - 0.0.0.0
   - --port
@@ -9,17 +9,19 @@ command:
 env:
   - name: LAKEBASE_HOST
     description: "Lakebase Autoscaling endpoint host"
+    value: "ep-icy-sound-e1pdqoh3.database.eastus2.azuredatabricks.net"
   - name: LAKEBASE_PORT
     description: "Lakebase Postgres port"
-    default: "5432"
+    value: "5432"
   - name: LAKEBASE_DATABASE
     description: "Lakebase database name"
-    default: "vic_consolidation_db"
+    value: "vic_consolidation_db"
   - name: LAKEBASE_SCHEMA
     description: "Postgres schema name"
-    default: "dtp_hackathon"
+    value: "dtp_hackathon"
   - name: LAKEBASE_USER
     description: "Native Postgres role username"
-    default: "vic_consolidation_app"
+    value: "vic_consolidation_app"
   - name: LAKEBASE_PASSWORD
     description: "Native Postgres role password"
+    value: "REDACTED!"

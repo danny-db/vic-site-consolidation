@@ -1,8 +1,8 @@
 """Parcel API endpoints."""
 from fastapi import APIRouter, Query, HTTPException
 from typing import Optional
-from ..db import fetch_all, fetch_one
-from ..models import Parcel, ParcelDetail
+from db import fetch_all, fetch_one
+from models import Parcel, ParcelDetail
 
 router = APIRouter(prefix="/api/parcels", tags=["parcels"])
 

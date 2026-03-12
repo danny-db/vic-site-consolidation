@@ -10,9 +10,9 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import os
 
-from .db import get_pool, close_pool, fetch_one
-from .routes import parcels, candidates, stats
-from .models import HealthResponse
+from db import get_pool, close_pool, fetch_one
+from routes import parcels, candidates, stats
+from models import HealthResponse
 
 
 @asynccontextmanager

@@ -1,7 +1,7 @@
 """Statistics endpoints."""
 from fastapi import APIRouter
-from ..db import fetch_all
-from ..models import TierStats, LGAStats
+from db import fetch_all
+from models import TierStats, LGAStats
 
 router = APIRouter(prefix="/api/stats", tags=["stats"])
 

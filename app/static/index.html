@@ -21,6 +21,9 @@
         .filter-group { margin-bottom: 10px; }
         .filter-group label { display: block; font-size: 11px; font-weight: 600; color: #666; margin-bottom: 3px; text-transform: uppercase; }
         select, input[type="number"] { width: 100%; padding: 6px 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px; }
+        input[type="range"] { width: 100%; margin-top: 4px; accent-color: #1a73e8; }
+        .range-labels { display: flex; justify-content: space-between; font-size: 10px; color: #999; margin-top: 2px; }
+        .range-value { font-size: 13px; font-weight: 600; color: #1a73e8; }
         button { width: 100%; padding: 8px; background: #1a73e8; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 600; margin-top: 8px; }
         button:hover { background: #1557b0; }
         .stats { margin-top: 12px; padding-top: 12px; border-top: 1px solid #eee; }
@@ -34,14 +37,24 @@
         .checkbox-group label { font-size: 12px; text-transform: none; font-weight: normal; }
         #loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
                    z-index: 3; background: white; padding: 24px 32px; border-radius: 8px;
-                   box-shadow: 0 4px 16px rgba(0,0,0,0.2); font-size: 14px; }
+                   box-shadow: 0 4px 16px rgba(0,0,0,0.2); font-size: 14px; text-align: center; }
+        #loading .spinner { display: inline-block; width: 20px; height: 20px; border: 3px solid #ddd;
+                            border-top-color: #1a73e8; border-radius: 50%; animation: spin 0.8s linear infinite;
+                            margin-right: 10px; vertical-align: middle; }
+        @keyframes spin { to { transform: rotate(360deg); } }
     </style>
 </head>
 <body>
-    <div id="loading">Loading parcels...</div>
+    <div id="loading"><span class="spinner"></span>Loading all parcels...</div>
     <div id="map"></div>
     <div id="controls">
         <h1>Site Consolidation Viewer</h1>
+
+        <div class="filter-group">
+            <label>Display Limit <span class="range-value" id="limitValue">All</span></label>
+            <input type="range" id="limitSlider" min="1000" max="170000" step="1000" value="170000" />
+            <div class="range-labels"><span>1,000</span><span>170,000 (All)</span></div>
+        </div>
         <div class="filter-group">
             <label>Suitability Tier</label>
             <select id="tierFilter">
@@ -59,7 +72,7 @@
         </div>
         <div class="filter-group">
             <label>Min Score</label>
-            <input type="number" id="minScore" value="0" min="0" max="200" />
+            <input type="number" id="minScore" value="" placeholder="0" min="-100" max="200" />
         </div>
         <div class="filter-group">
             <div class="checkbox-group">
@@ -89,35 +102,47 @@
             'Tier 5 - Low': [26, 150, 65],
         };
 
+        const TOTAL_PARCELS = 167948;
         let deckgl = null;
         let geojsonData = null;
+
+        // Slider label update
+        const limitSlider = document.getElementById('limitSlider');
+        const limitValue = document.getElementById('limitValue');
+        limitSlider.addEventListener('input', () => {
+            const v = parseInt(limitSlider.value);
+            limitValue.textContent = v >= TOTAL_PARCELS ? 'All' : v.toLocaleString();
+        });
 
         async function loadData() {
             const tier = document.getElementById('tierFilter').value;
             const lga = document.getElementById('lgaFilter').value;
             const minScore = document.getElementById('minScore').value;
             const excludeGrowth = document.getElementById('excludeGrowth').checked;
+            const limit = parseInt(limitSlider.value);
 
             const params = new URLSearchParams();
             if (tier) params.set('tier', tier);
             if (lga) params.set('lga', lga);
-            if (minScore > 0) params.set('min_score', minScore);
+            if (minScore && parseInt(minScore) !== 0) params.set('min_score', minScore);
             if (excludeGrowth) params.set('exclude_growth_areas', 'true');
-            params.set('limit', '5000');
+            params.set('limit', String(limit));
 
             const url = `/api/parcels/geojson?${params}`;
 
             try {
-                document.getElementById('loading').style.display = 'block';
-                document.getElementById('loading').textContent = 'Loading parcels...';
+                const loading = document.getElementById('loading');
+                loading.style.display = 'block';
+                loading.innerHTML = `<span class="spinner"></span>Loading ${limit >= TOTAL_PARCELS ? 'all' : limit.toLocaleString()} parcels...`;
+
                 const resp = await fetch(url);
                 geojsonData = await resp.json();
                 updateMap();
                 updateStats();
-                document.getElementById('loading').style.display = 'none';
+                loading.style.display = 'none';
             } catch (err) {
                 console.error('Failed to load data:', err);
-                document.getElementById('loading').textContent = 'Error loading data. Check API connection.';
+                document.getElementById('loading').innerHTML = 'Error loading data. Check API connection.';
             }
         }
 
@@ -143,18 +168,16 @@
             const features = geojsonData.features || [];
 
             if (!deckgl) {
-                const firstCoord = features.length > 0
-                    ? [features[0].properties.centroid_lon, features[0].properties.centroid_lat]
-                    : [145.0, -37.8];
-
+                // Initial view: show all of Casey LGA at an immersive tilt
                 deckgl = new deck.DeckGL({
                     container: 'map',
-                    mapStyle: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
+                    mapStyle: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
                     initialViewState: {
-                        longitude: firstCoord[0],
-                        latitude: firstCoord[1],
-                        zoom: 14,
-                        pitch: 0,
+                        longitude: 145.30,
+                        latitude: -38.08,
+                        zoom: 11,
+                        pitch: 45,
+                        bearing: -15,
                     },
                     controller: true,
                     layers: [layer],
@@ -179,28 +202,6 @@
                 });
             } else {
                 deckgl.setProps({ layers: [layer] });
-            }
-
-            // Auto-fit to data bounds
-            if (features.length > 0) {
-                const lons = features.map(f => f.properties.centroid_lon);
-                const lats = features.map(f => f.properties.centroid_lat);
-                const centerLon = (Math.min(...lons) + Math.max(...lons)) / 2;
-                const centerLat = (Math.min(...lats) + Math.max(...lats)) / 2;
-                const lonSpan = Math.max(...lons) - Math.min(...lons);
-                const latSpan = Math.max(...lats) - Math.min(...lats);
-                const span = Math.max(lonSpan, latSpan);
-                const zoom = span > 0.5 ? 10 : span > 0.1 ? 12 : span > 0.02 ? 14 : 15;
-
-                deckgl.setProps({
-                    initialViewState: {
-                        longitude: centerLon,
-                        latitude: centerLat,
-                        zoom: zoom,
-                        pitch: 0,
-                        transitionDuration: 1000,
-                    }
-                });
             }
         }
 

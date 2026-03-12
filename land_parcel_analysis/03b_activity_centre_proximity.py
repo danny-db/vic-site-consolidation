@@ -138,28 +138,17 @@ if not HAS_ACTIVITY_CENTRES:
     print("Please download Activity Centres data from Plan Melbourne and re-run notebook 01.")
     dbutils.notebook.exit("Activity Centres data not available")
 
-# Use Casey LGA - it's in Metro Melbourne where Activity Centres are located
-# (Activity Centres from Plan Melbourne are concentrated in Metro Melbourne)
-sample_lga = "CASEY"
-
-# Verify the LGA exists in our data
-lga_check = spark.sql(f"""
-    SELECT COUNT(*) AS parcel_count
+# Compute activity centre proximity for ALL parcels
+# Activity Centres from Plan Melbourne are concentrated in Metro Melbourne,
+# but we compute distances for all parcels — rural parcels will naturally
+# have large distances which feed into the scoring model as a constraint.
+parcel_count = spark.sql(f"""
+    SELECT COUNT(*) AS cnt
     FROM {catalog_name}.{schema_name}.parcel_edge_topology
-    WHERE lga_name = '{sample_lga}'
+    WHERE centroid_lon IS NOT NULL AND centroid_lat IS NOT NULL
 """).collect()[0][0]
 
-if lga_check == 0:
-    print(f"WARNING: {sample_lga} not found in parcel_edge_topology. Available LGAs:")
-    display(spark.sql(f"""
-        SELECT DISTINCT lga_name, COUNT(*) as count
-        FROM {catalog_name}.{schema_name}.parcel_edge_topology
-        GROUP BY lga_name
-        ORDER BY count DESC
-        LIMIT 20
-    """))
-else:
-    print(f"Computing activity centre proximity for LGA: {sample_lga} ({lga_check:,} parcels)")
+print(f"Computing activity centre proximity for {parcel_count:,} parcels")
 
 # COMMAND ----------
 
@@ -265,7 +254,6 @@ spark.sql(f"""
         FROM {catalog_name}.{schema_name}.parcel_edge_topology
         WHERE centroid_lon IS NOT NULL
           AND centroid_lat IS NOT NULL
-          AND lga_name = '{sample_lga}'
     ),
     ac_transformed AS (
         -- Get activity centre centroids in WGS84 (transform only if needed)

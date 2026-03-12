@@ -138,32 +138,24 @@ print("Road classification mapping defined")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 4. Compute Road Frontage for Sample Area
+# MAGIC ## 4. Compute Road Frontage for All Parcels
 # MAGIC
-# MAGIC Due to computational cost of spatial joins, we compute for a sample LGA first.
+# MAGIC Compute road frontage features for all parcels using spatial join between
+# MAGIC parcel boundaries and the road network. The parcel-to-road join is efficient
+# MAGIC because it leverages ST_Intersects with a buffered road geometry (not a self-join).
 
 # COMMAND ----------
 
 catalog_name = dbutils.widgets.get("catalog_name")
 schema_name = dbutils.widgets.get("schema_name")
 
-# Use Casey LGA - Metro Melbourne area with good Activity Centre coverage
-sample_lga = "CASEY"
-
-# Verify the LGA exists in edge topology
-lga_check = spark.sql(f"""
+parcel_count = spark.sql(f"""
     SELECT COUNT(*) AS cnt
     FROM {catalog_name}.{schema_name}.parcel_edge_topology
-    WHERE lga_name = '{sample_lga}'
+    WHERE geometry IS NOT NULL
 """).collect()[0]['cnt']
 
-if lga_check == 0:
-    print(f"WARNING: {sample_lga} not found in edge topology. Falling back to first available LGA.")
-    sample_lga = spark.sql(f"""
-        SELECT DISTINCT lga_name FROM {catalog_name}.{schema_name}.parcel_edge_topology LIMIT 1
-    """).collect()[0][0]
-
-print(f"Computing road frontage for LGA: {sample_lga} ({lga_check:,} parcels)")
+print(f"Computing road frontage for {parcel_count:,} parcels")
 
 # COMMAND ----------
 
@@ -214,9 +206,7 @@ spark.sql(f"""
             ST_SetSRID(ST_Boundary(geometry), ST_SRID(geometry)) AS boundary,
             geometry
         FROM {catalog_name}.{schema_name}.parcel_edge_topology
-        -- Limit to sample LGA for performance
-        WHERE lga_name = '{sample_lga}'
-          AND geometry IS NOT NULL
+        WHERE geometry IS NOT NULL
           AND ST_SRID(geometry) > 0  -- Filter invalid SRIDs
     ),
     road_segments AS (
@@ -384,7 +374,6 @@ spark.sql(f"""
 
     FROM {catalog_name}.{schema_name}.parcel_edge_topology e
     LEFT JOIN frontage_stats f ON e.parcel_id = f.parcel_id
-    WHERE e.lga_name = '{sample_lga}'
 """)
 
 print("Created parcel_road_frontage table")

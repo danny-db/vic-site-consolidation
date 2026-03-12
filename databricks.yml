@@ -26,13 +26,6 @@ resources:
             environment_version: "4"
             dependencies: []
 
-        - environment_key: lakebase_env
-          spec:
-            environment_version: "4"
-            dependencies:
-              - databricks-sdk>=0.90.0
-              - psycopg2-binary
-
       tasks:
         # Stage 1: Geometric Features
         - task_key: geometric_features
@@ -103,7 +96,7 @@ resources:
           description: "Sync consolidation candidates to Lakebase (PostGIS) for the visualization app"
           depends_on:
             - task_key: suitability_scoring
-          environment_key: lakebase_env
+          environment_key: serverless_env
           notebook_task:
             notebook_path: land_parcel_analysis/05_lakebase_sync.py
             base_parameters:

@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VIC Site Consolidation Viewer</title>
+    <script src="https://unpkg.com/deck.gl@9.0.16/dist.min.js"></script>
+    <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
+    <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet" />
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+        #map { width: 100vw; height: 100vh; }
+        #controls {
+            position: absolute; top: 10px; left: 10px; z-index: 1;
+            background: rgba(255,255,255,0.95); border-radius: 8px;
+            padding: 16px; width: 280px; box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            max-height: 90vh; overflow-y: auto;
+        }
+        h1 { font-size: 16px; margin-bottom: 12px; color: #1a1a2e; }
+        .filter-group { margin-bottom: 10px; }
+        .filter-group > label { display: block; font-size: 11px; font-weight: 600; color: #666; margin-bottom: 3px; text-transform: uppercase; }
+        select, input[type="number"] { width: 100%; padding: 6px 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px; }
+        input[type="range"] { width: 100%; margin-top: 4px; accent-color: #1a73e8; }
+        .range-labels { display: flex; justify-content: space-between; font-size: 10px; color: #999; margin-top: 2px; }
+        .range-value { font-size: 13px; font-weight: 600; color: #1a73e8; }
+        button { width: 100%; padding: 8px; background: #1a73e8; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 600; margin-top: 8px; }
+        button:hover { background: #1557b0; }
+        .stats { margin-top: 12px; padding-top: 12px; border-top: 1px solid #eee; }
+        .stat-row { display: flex; justify-content: space-between; font-size: 12px; padding: 2px 0; }
+        .stat-label { color: #666; }
+        .stat-value { font-weight: 600; }
+        #legend { margin-top: 12px; }
+        .legend-item { display: flex; align-items: center; font-size: 11px; padding: 2px 0; }
+        .legend-dot { width: 14px; height: 14px; border-radius: 2px; margin-right: 6px; flex-shrink: 0; }
+        .checkbox-group { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+        .checkbox-group label { font-size: 12px; text-transform: none; font-weight: normal; }
+        #loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+                   z-index: 3; background: white; padding: 24px 32px; border-radius: 8px;
+                   box-shadow: 0 4px 16px rgba(0,0,0,0.2); font-size: 14px; text-align: center; }
+        #loading .spinner { display: inline-block; width: 20px; height: 20px; border: 3px solid #ddd;
+                            border-top-color: #1a73e8; border-radius: 50%; animation: spin 0.8s linear infinite;
+                            margin-right: 10px; vertical-align: middle; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* Multi-select dropdown */
+        .multi-select { position: relative; }
+        .multi-select-btn {
+            width: 100%; padding: 6px 8px; border: 1px solid #ddd; border-radius: 4px;
+            font-size: 13px; background: white; cursor: pointer; text-align: left;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .multi-select-btn::after { content: '\25BC'; font-size: 9px; color: #999; margin-left: 6px; flex-shrink: 0; }
+        .multi-select-btn.open::after { content: '\25B2'; }
+        .multi-select-dropdown {
+            display: none; position: absolute; top: 100%; left: 0; right: 0;
+            background: white; border: 1px solid #ddd; border-top: none;
+            border-radius: 0 0 4px 4px; z-index: 10; max-height: 200px; overflow-y: auto;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        .multi-select-dropdown.open { display: block; }
+        .multi-select-dropdown label {
+            display: flex; align-items: center; gap: 6px; padding: 6px 8px;
+            font-size: 12px; cursor: pointer; text-transform: none; font-weight: normal;
+        }
+        .multi-select-dropdown label:hover { background: #f5f5f5; }
+        .multi-select-dropdown input[type="checkbox"] { margin: 0; }
+        .tier-dot { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+    </style>
+</head>
+<body>
+    <div id="loading"><span class="spinner"></span>Loading all parcels...</div>
+    <div id="map"></div>
+    <div id="controls">
+        <h1>Site Consolidation Viewer</h1>
+
+        <div class="filter-group">
+            <label>Display Limit <span class="range-value" id="limitValue">All</span></label>
+            <input type="range" id="limitSlider" min="1000" max="170000" step="1000" value="170000" />
+            <div class="range-labels"><span>1,000</span><span>170,000 (All)</span></div>
+        </div>
+        <div class="filter-group">
+            <label>Suitability Tier</label>
+            <div class="multi-select" id="tierMultiSelect">
+                <div class="multi-select-btn" id="tierBtn">All Tiers</div>
+                <div class="multi-select-dropdown" id="tierDropdown">
+                    <label><input type="checkbox" value="Tier 1 - Excellent" class="tier-cb" /><span class="tier-dot" style="background:#d7191c"></span>Tier 1 - Excellent</label>
+                    <label><input type="checkbox" value="Tier 2 - Very Good" class="tier-cb" /><span class="tier-dot" style="background:#fdae61"></span>Tier 2 - Very Good</label>
+                    <label><input type="checkbox" value="Tier 3 - Good" class="tier-cb" /><span class="tier-dot" style="background:#fee08b"></span>Tier 3 - Good</label>
+                    <label><input type="checkbox" value="Tier 4 - Moderate" class="tier-cb" /><span class="tier-dot" style="background:#a6d96a"></span>Tier 4 - Moderate</label>
+                    <label><input type="checkbox" value="Tier 5 - Low" class="tier-cb" /><span class="tier-dot" style="background:#1a9641"></span>Tier 5 - Low</label>
+                </div>
+            </div>
+        </div>
+        <div class="filter-group">
+            <label>LGA</label>
+            <select id="lgaFilter"><option value="">All LGAs</option></select>
+        </div>
+        <div class="filter-group">
+            <label>Min Score</label>
+            <input type="number" id="minScore" value="" placeholder="0" min="-100" max="200" />
+        </div>
+        <div class="filter-group">
+            <div class="checkbox-group">
+                <input type="checkbox" id="excludeGrowth" />
+                <label for="excludeGrowth">Exclude growth-area LGAs</label>
+            </div>
+        </div>
+        <button onclick="loadData()">Apply Filters</button>
+
+        <div class="stats" id="statsPanel"></div>
+
+        <div id="legend">
+            <div class="legend-item"><div class="legend-dot" style="background:#d7191c"></div>Tier 1 - Excellent</div>
+            <div class="legend-item"><div class="legend-dot" style="background:#fdae61"></div>Tier 2 - Very Good</div>
+            <div class="legend-item"><div class="legend-dot" style="background:#fee08b"></div>Tier 3 - Good</div>
+            <div class="legend-item"><div class="legend-dot" style="background:#a6d96a"></div>Tier 4 - Moderate</div>
+            <div class="legend-item"><div class="legend-dot" style="background:#1a9641"></div>Tier 5 - Low</div>
+        </div>
+    </div>
+
+    <script>
+        const TIER_COLORS = {
+            'Tier 1 - Excellent': [215, 25, 28],
+            'Tier 2 - Very Good': [253, 174, 97],
+            'Tier 3 - Good': [254, 224, 139],
+            'Tier 4 - Moderate': [166, 217, 106],
+            'Tier 5 - Low': [26, 150, 65],
+        };
+
+        const TOTAL_PARCELS = 167948;
+        let deckgl = null;
+        let geojsonData = null;
+        let lastEtag = null;
+
+        /* --- Multi-select tier dropdown --- */
+        const tierBtn = document.getElementById('tierBtn');
+        const tierDropdown = document.getElementById('tierDropdown');
+        const tierCheckboxes = document.querySelectorAll('.tier-cb');
+
+        tierBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            tierBtn.classList.toggle('open');
+            tierDropdown.classList.toggle('open');
+        });
+        document.addEventListener('click', () => {
+            tierBtn.classList.remove('open');
+            tierDropdown.classList.remove('open');
+        });
+        tierDropdown.addEventListener('click', (e) => e.stopPropagation());
+
+        function getSelectedTiers() {
+            return Array.from(tierCheckboxes).filter(cb => cb.checked).map(cb => cb.value);
+        }
+
+        tierCheckboxes.forEach(cb => {
+            cb.addEventListener('change', () => {
+                const sel = getSelectedTiers();
+                tierBtn.textContent = sel.length === 0 ? 'All Tiers'
+                    : sel.length <= 2 ? sel.map(s => s.replace('Tier ', 'T')).join(', ')
+                    : `${sel.length} tiers selected`;
+            });
+        });
+
+        /* --- Limit slider --- */
+        const limitSlider = document.getElementById('limitSlider');
+        const limitValue = document.getElementById('limitValue');
+        limitSlider.addEventListener('input', () => {
+            const v = parseInt(limitSlider.value);
+            limitValue.textContent = v >= TOTAL_PARCELS ? 'All' : v.toLocaleString();
+        });
+
+        /* --- Data loading with NDJSON streaming --- */
+        let lastParamsStr = null;
+        let streamAbortController = null;
+
+        function buildParams() {
+            const tiers = getSelectedTiers();
+            const lga = document.getElementById('lgaFilter').value;
+            const minScore = document.getElementById('minScore').value;
+            const excludeGrowth = document.getElementById('excludeGrowth').checked;
+            const limit = parseInt(limitSlider.value);
+
+            const params = new URLSearchParams();
+            tiers.forEach(t => params.append('tier', t));
+            if (lga) params.set('lga', lga);
+            if (minScore && parseInt(minScore) !== 0) params.set('min_score', minScore);
+            if (excludeGrowth) params.set('exclude_growth_areas', 'true');
+            params.set('limit', String(limit));
+            return params;
+        }
+
+        async function loadData() {
+            const params = buildParams();
+            const paramsStr = params.toString();
+
+            // Client-side cache: same filters → reuse instantly
+            if (paramsStr === lastParamsStr && geojsonData) {
+                updateMap();
+                updateStats();
+                return;
+            }
+
+            // Abort any in-flight stream
+            if (streamAbortController) {
+                streamAbortController.abort();
+            }
+            streamAbortController = new AbortController();
+
+            lastParamsStr = paramsStr;
+            const loading = document.getElementById('loading');
+            loading.style.display = 'block';
+            loading.innerHTML = '<span class="spinner"></span>Streaming parcels...';
+
+            try {
+                const resp = await fetch(`/api/parcels/geojson/stream?${params}`, {
+                    signal: streamAbortController.signal,
+                });
+                const reader = resp.body.getReader();
+                const decoder = new TextDecoder();
+
+                let buffer = '';
+                let features = [];
+                let lastRenderCount = 0;
+                const startTime = performance.now();
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop(); // keep incomplete last line
+
+                    for (const line of lines) {
+                        if (!line.trim()) continue;
+                        const parsed = JSON.parse(line);
+                        if (parsed._meta) continue; // skip metadata line
+                        features.push(parsed);
+                    }
+
+                    // Adaptive batch rendering: fast at start, fewer updates later
+                    const count = features.length;
+                    const batch = count < 2000 ? 500
+                                : count < 10000 ? 2000
+                                : 5000;
+                    if (count - lastRenderCount >= batch) {
+                        geojsonData = { type: 'FeatureCollection', features };
+                        updateMap();
+                        const elapsed = ((performance.now() - startTime) / 1000).toFixed(1);
+                        loading.innerHTML = `<span class="spinner"></span>${count.toLocaleString()} parcels (${elapsed}s)`;
+                        lastRenderCount = count;
+                    }
+                }
+
+                // Process remaining buffer
+                if (buffer.trim()) {
+                    const parsed = JSON.parse(buffer);
+                    if (!parsed._meta) features.push(parsed);
+                }
+
+                // Final render
+                geojsonData = { type: 'FeatureCollection', features };
+                updateMap();
+                updateStats();
+                const totalTime = ((performance.now() - startTime) / 1000).toFixed(1);
+                loading.innerHTML = `${features.length.toLocaleString()} parcels loaded in ${totalTime}s`;
+                setTimeout(() => { loading.style.display = 'none'; }, 1500);
+            } catch (err) {
+                if (err.name === 'AbortError') return; // cancelled by new request
+                console.error('Failed to load data:', err);
+                loading.innerHTML = 'Error loading data. Check API connection.';
+            }
+        }
+
+        function updateMap() {
+            const layer = new deck.GeoJsonLayer({
+                id: 'parcels',
+                data: geojsonData,
+                filled: true,
+                stroked: true,
+                getFillColor: f => {
+                    const color = TIER_COLORS[f.properties.suitability_tier] || [128, 128, 128];
+                    return [...color, 180];
+                },
+                getLineColor: [40, 40, 40, 200],
+                getLineWidth: 1,
+                lineWidthMinPixels: 0.5,
+                lineWidthMaxPixels: 2,
+                pickable: true,
+                autoHighlight: true,
+                highlightColor: [255, 255, 255, 100],
+            });
+
+            if (!deckgl) {
+                deckgl = new deck.DeckGL({
+                    container: 'map',
+                    mapStyle: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+                    initialViewState: {
+                        longitude: 145.30,
+                        latitude: -38.08,
+                        zoom: 11,
+                        pitch: 45,
+                        bearing: -15,
+                    },
+                    controller: true,
+                    layers: [layer],
+                    getTooltip: ({object}) => {
+                        if (!object || !object.properties) return null;
+                        const p = object.properties;
+                        return {
+                            html: `
+                                <b>${p.parcel_id}</b><br/>
+                                Zone: ${p.zone_code || 'N/A'}<br/>
+                                LGA: ${p.lga_name || 'N/A'}<br/>
+                                Area: ${(p.area_sqm || 0).toFixed(0)} sqm<br/>
+                                Score: <b>${p.suitability_score}</b><br/>
+                                Tier: ${p.suitability_tier}<br/>
+                                Neighbors: ${p.num_adjacent_parcels || 0}<br/>
+                                Nearest PT: ${(p.nearest_any_pt_m || 0).toFixed(0)}m
+                                ${p.is_growth_area_lga ? '<br/><span style="color:#ff9800">Growth Area LGA</span>' : ''}
+                            `,
+                            style: { backgroundColor: 'rgba(0,0,0,0.85)', color: 'white', fontSize: '12px', padding: '10px 14px', borderRadius: '6px' }
+                        };
+                    }
+                });
+            } else {
+                deckgl.setProps({ layers: [layer] });
+            }
+        }
+
+        function updateStats() {
+            const panel = document.getElementById('statsPanel');
+            const features = geojsonData.features || [];
+            const total = features.length;
+            const tiers = {};
+            features.forEach(f => {
+                const t = f.properties.suitability_tier;
+                tiers[t] = (tiers[t] || 0) + 1;
+            });
+            const avgScore = total > 0
+                ? (features.reduce((s, f) => s + (f.properties.suitability_score || 0), 0) / total).toFixed(1)
+                : 0;
+            const growthCount = features.filter(f => f.properties.is_growth_area_lga).length;
+
+            panel.innerHTML = `
+                <div class="stat-row"><span class="stat-label">Parcels shown</span><span class="stat-value">${total.toLocaleString()}</span></div>
+                <div class="stat-row"><span class="stat-label">Avg score</span><span class="stat-value">${avgScore}</span></div>
+                <div class="stat-row"><span class="stat-label">Growth-area</span><span class="stat-value">${growthCount.toLocaleString()}</span></div>
+                ${Object.entries(tiers).sort().map(([k,v]) => `<div class="stat-row"><span class="stat-label">${k.replace('Tier ','T')}</span><span class="stat-value">${v.toLocaleString()}</span></div>`).join('')}
+            `;
+        }
+
+        // Load LGA options on startup
+        async function init() {
+            try {
+                const lgaResp = await fetch('/api/stats/lgas');
+                const lgas = await lgaResp.json();
+                const lgaSelect = document.getElementById('lgaFilter');
+                lgas.forEach(l => {
+                    const opt = document.createElement('option');
+                    opt.value = l.lga_name;
+                    opt.textContent = `${l.lga_name} (${l.parcel_count})${l.growth_area ? ' *' : ''}`;
+                    lgaSelect.appendChild(opt);
+                });
+            } catch (err) {
+                console.warn('Could not load LGA list:', err);
+            }
+            await loadData();
+        }
+
+        init();
+    </script>
+</body>
+</html>

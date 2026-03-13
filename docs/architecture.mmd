@@ -1,0 +1,86 @@
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#1B3A5C', 'primaryTextColor': '#fff', 'primaryBorderColor': '#0D2137', 'lineColor': '#5B8DB8', 'secondaryColor': '#E8F4FD', 'tertiaryColor': '#F0F7FF', 'fontSize': '14px'}}}%%
+flowchart TB
+    subgraph sources["DATA SOURCES"]
+        direction TB
+        subgraph vic["Victorian Open Data (Data.Vic)"]
+            parcels["Vicmap Property<br/>Parcel Polygons<br/><i>SHP | EPSG:3111</i>"]
+            zones["Vicmap Planning<br/>Zone Polygons<br/><i>SHP | EPSG:3111</i>"]
+            overlays["Vicmap Planning<br/>Overlay Polygons<br/><i>SHP | EPSG:3111</i>"]
+            roads["Vicmap Transport<br/>Road Lines<br/><i>SHP | EPSG:3111</i>"]
+        end
+        subgraph transport["Transport Open Data"]
+            ptstops["PT Stops<br/>Train/Tram/Bus<br/><i>GeoJSON | EPSG:4326</i>"]
+        end
+        subgraph planmelb["Planning Victoria"]
+            actcentres["Activity Centres<br/>Metro/Major/Local<br/><i>SHP | EPSG:3111</i>"]
+        end
+    end
+
+    subgraph ingestion["INGESTION LAYER"]
+        geodatasource["Custom Geo PySpark DataSource<br/><i>Fiona streaming reads</i><br/>SHP | GDB | GeoJSON | GPKG | KML | TAB"]
+        materialize["materialize_geo_table()<br/><i>WKT → ST_GeomFromWKT → native GEOMETRY</i>"]
+        geodatasource --> materialize
+    end
+
+    subgraph pipeline["PROCESSING PIPELINE (Databricks Spatial SQL)"]
+        direction TB
+        nb02["<b>02: Geometric Features</b><br/>ST_Area, ST_Perimeter, ST_ConvexHull<br/>compactness, elongation, aspect ratio"]
+        nb03["<b>03: Edge Topology</b><br/>ST_Intersects, ST_Touches<br/>adjacency, shared boundaries"]
+        nb03a["<b>03a: Road Frontage</b><br/>ST_Buffer, ST_Intersection<br/>corner lots, laneway access"]
+        nb03b["<b>03b: Activity Centre<br/>Proximity</b><br/>ST_DistanceSphere<br/>walkability distances"]
+        nb04["<b>04: Suitability Scoring</b><br/>Weighted multi-criteria model<br/>16 opportunity + 10 constraint factors<br/><i>incl. growth-area penalties</i>"]
+        nb05["<b>05: Lakebase Sync</b><br/>Sync to PostGIS<br/>spatial views + indexes"]
+
+        nb02 --> nb03
+        nb03 --> nb03a
+        nb03 --> nb03b
+        nb03a --> nb04
+        nb03b --> nb04
+        nb04 --> nb05
+    end
+
+    subgraph outputs["OUTPUTS"]
+        direction TB
+        subgraph uctables["Unity Catalog Delta Tables"]
+            geomtbl["parcel_geometric_features"]
+            adjtbl["parcel_adjacency"]
+            edgetbl["parcel_edge_topology"]
+            roadtbl["parcel_road_frontage"]
+            pttbl["parcel_pt_proximity"]
+            actbl["parcel_activity_centre_proximity"]
+            scoretbl["parcel_suitability_scores"]
+            candidatetbl["consolidation_candidates<br/><i>Ranked + Tiered</i>"]
+        end
+        subgraph lakebase["Lakebase (PostGIS)"]
+            candidates_geo["candidates_geo<br/><i>Spatial view with geometry</i>"]
+            candidates_pts["candidates_points<br/><i>Materialized view + GIST index</i>"]
+            adj_pairs["adjacency_pairs<br/><i>Consolidation pair lookups</i>"]
+        end
+        subgraph appstack["Databricks App"]
+            fastapi["FastAPI Backend<br/><i>asyncpg + PostGIS queries</i><br/><i>Server-side cache + ETag</i>"]
+            deckgl["Deck.gl Frontend<br/><i>GeoJSON polygon rendering</i><br/><i>Multi-select tier filter</i>"]
+            fastapi --> deckgl
+        end
+        subgraph ai["AI Analysis"]
+            aiquery["ai_query() with<br/>Claude Opus<br/><i>Human-readable summaries</i>"]
+        end
+    end
+
+    subgraph infra["INFRASTRUCTURE"]
+        serverless["Databricks Serverless<br/>Environment v4 | 32GB Memory"]
+        uc["Unity Catalog<br/>Native GEOMETRY Type"]
+        dab["Databricks Asset Bundles<br/>databricks.yml"]
+    end
+
+    sources --> ingestion
+    ingestion --> pipeline
+    pipeline --> outputs
+    nb05 --> lakebase
+    lakebase --> appstack
+    infra -.-> pipeline
+
+    style sources fill:#E8F4FD,stroke:#5B8DB8,stroke-width:2px
+    style ingestion fill:#FFF3E0,stroke:#FF9800,stroke-width:2px
+    style pipeline fill:#E8F5E9,stroke:#4CAF50,stroke-width:2px
+    style outputs fill:#F3E5F5,stroke:#9C27B0,stroke-width:2px
+    style infra fill:#ECEFF1,stroke:#607D8B,stroke-width:2px

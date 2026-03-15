@@ -91,19 +91,6 @@ resources:
               schema_name: ${var.schema_name}
             source: WORKSPACE
 
-        # Stage 4a: Consolidation Clusters (depends on scoring, parallel with lakebase_sync)
-        - task_key: consolidation_clusters
-          description: "Graph-based multi-parcel consolidation cluster detection using NetworkX"
-          depends_on:
-            - task_key: suitability_scoring
-          environment_key: serverless_env
-          notebook_task:
-            notebook_path: land_parcel_analysis/04a_consolidation_clusters.py
-            base_parameters:
-              catalog_name: ${var.catalog_name}
-              schema_name: ${var.schema_name}
-            source: WORKSPACE
-
         # Stage 5: Lakebase Sync (depends on scoring)
         - task_key: lakebase_sync
           description: "Sync consolidation candidates to Lakebase (PostGIS) for the visualization app"

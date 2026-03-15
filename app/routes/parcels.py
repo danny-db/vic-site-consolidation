@@ -193,36 +193,57 @@ async def parcels_geojson_stream(
     where = "WHERE geometry_wkt IS NOT NULL"
     if conditions:
         where += " AND " + " AND ".join(conditions)
-    params.append(limit)
 
-    query = f"""
-        SELECT parcel_id, plan_number, lot_number, zone_code, lga_name,
+    # Stream tiers in priority order to avoid expensive full-table sort.
+    # Each tier query starts returning rows immediately via seq scan + filter.
+    tier_order = [
+        'Tier 1 - Excellent',
+        'Tier 2 - Very Good',
+        'Tier 3 - Good',
+        'Tier 4 - Moderate',
+        'Tier 5 - Low',
+    ]
+
+    select_cols = """parcel_id, plan_number, lot_number, zone_code, lga_name,
                centroid_lon, centroid_lat, area_sqm, compactness_index,
                num_adjacent_parcels, nearest_any_pt_m, is_growth_area_lga,
                lots_in_plan, opportunity_score, constraint_score,
                suitability_score, suitability_tier, rank,
-               ST_AsGeoJSON(ST_GeomFromText(geometry_wkt, 4326))::json AS geojson
-        FROM consolidation_candidates_sync
-        {where}
-        ORDER BY suitability_score DESC
-        LIMIT ${idx}
-    """
+               ST_AsGeoJSON(ST_GeomFromText(geometry_wkt, 4326))::json AS geojson"""
 
     async def generate():
+        # Send immediate heartbeat to keep proxy connection alive
+        yield json.dumps({"_meta": True, "status": "starting"}, separators=(",", ":")) + "\n"
+
         count = 0
-        async for row in fetch_stream(query, *params):
-            geojson = row.pop("geojson", None)
-            if geojson is None:
-                continue
-            if isinstance(geojson, str):
-                geojson = json.loads(geojson)
-            feature = {
-                "type": "Feature",
-                "geometry": geojson,
-                "properties": row,
-            }
-            yield json.dumps(feature, separators=(",", ":")) + "\n"
-            count += 1
+        remaining = limit
+        for tier_name in tier_order:
+            if remaining <= 0:
+                break
+            tier_where = where + f" AND suitability_tier = ${idx}"
+            tier_params = list(params) + [tier_name, remaining]
+            tier_query = f"""
+                SELECT {select_cols}
+                FROM consolidation_candidates_sync
+                {tier_where}
+                LIMIT ${idx + 1}
+            """
+            async for row in fetch_stream(tier_query, *tier_params):
+                geojson = row.pop("geojson", None)
+                if geojson is None:
+                    continue
+                if isinstance(geojson, str):
+                    geojson = json.loads(geojson)
+                feature = {
+                    "type": "Feature",
+                    "geometry": geojson,
+                    "properties": row,
+                }
+                yield json.dumps(feature, separators=(",", ":")) + "\n"
+                count += 1
+                remaining -= 1
+                if remaining <= 0:
+                    break
         # Final metadata line so frontend knows the stream is complete
         yield json.dumps({"_meta": True, "count": count}, separators=(",", ":")) + "\n"
 

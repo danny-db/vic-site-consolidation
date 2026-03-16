@@ -24,4 +24,4 @@ env:
     value: "vic_consolidation_app"
   - name: LAKEBASE_PASSWORD
     description: "Native Postgres role password"
-    value: "REDACTED"
+    value: "${LAKEBASE_PASSWORD}"

@@ -81,14 +81,47 @@ schema_name = dbutils.widgets.get("schema_name")
 # Finer than res 9 (~174m) to reduce false positive candidate pairs
 H3_RESOLUTION = 10
 
+# ============================================================================
+# ZONE FILTER: Only tessellate zones where site consolidation is relevant
+# ============================================================================
+# The Vicmap Property dataset contains ~318K parcels > 5 hectares, almost
+# entirely in rural/non-residential zones (FZ, PCRZ, RLZ, RCZ, PUZ, etc.).
+# These giant polygons (up to 721 km²!) cause two problems:
+#   1. They produce millions of H3 cells, bloating the index
+#   2. Their huge boundaries (~88km perimeter) produce nonsensical
+#      shared_boundary_m values when paired with normal suburban parcels
+#
+# Fix: Only index zones where consolidation is relevant — residential and
+# mixed-use zones in established suburbs. This typically reduces the working
+# set from ~4.3M to ~2M parcels and dramatically speeds up the pipeline.
+# ============================================================================
+CONSOLIDATION_ZONE_REGEX = r'^(GRZ|NRZ|RGZ|MUZ|C1Z|C2Z|HCTZ|CDZ|ACZ|B1Z|B2Z)'
+
+# Maximum parcel area to include (5 hectares). Even within residential zones,
+# parcels above this size are typically parks, reserves, or data artifacts —
+# not realistic consolidation candidates.
+MAX_PARCEL_AREA_SQM = 50000
+
 total_parcels = spark.sql(f"""
     SELECT COUNT(*) AS cnt
     FROM {catalog_name}.{schema_name}.parcel_geometric_features
     WHERE geometry IS NOT NULL
 """).first()["cnt"]
 
+eligible_parcels = spark.sql(f"""
+    SELECT COUNT(*) AS cnt
+    FROM {catalog_name}.{schema_name}.parcel_geometric_features
+    WHERE geometry IS NOT NULL
+      AND zone_code RLIKE '{CONSOLIDATION_ZONE_REGEX}'
+      AND area_sqm < {MAX_PARCEL_AREA_SQM}
+""").first()["cnt"]
+
 print(f"Total parcels with geometry: {total_parcels:,}")
+print(f"Eligible for consolidation (zone + area filter): {eligible_parcels:,}")
+print(f"Excluded: {total_parcels - eligible_parcels:,} ({100*(total_parcels - eligible_parcels)/total_parcels:.1f}%)")
 print(f"H3 resolution: {H3_RESOLUTION} (~65m hexagons)")
+print(f"Zone filter: {CONSOLIDATION_ZONE_REGEX}")
+print(f"Max area: {MAX_PARCEL_AREA_SQM:,} sqm")
 
 # COMMAND ----------
 
@@ -145,6 +178,13 @@ spark.sql(f"""
         h3_tessellateaswkb(ST_AsText(ST_Transform(p.geometry, 4326)), {H3_RESOLUTION})
     ) h3 AS cellid, core, chip
     WHERE p.geometry IS NOT NULL
+      -- Zone filter: only consolidation-relevant zones (residential/mixed-use)
+      -- Excludes FZ, PCRZ, RLZ, RCZ, PUZ, GWZ, RAZ etc. which contain giant
+      -- rural/conservation parcels that are not consolidation candidates
+      AND p.zone_code RLIKE '{CONSOLIDATION_ZONE_REGEX}'
+      -- Area guard: exclude parcels > 5 hectares even within residential zones
+      -- (parks, reserves, data artifacts with perimeters up to 88km)
+      AND p.area_sqm < {MAX_PARCEL_AREA_SQM}
 """)
 
 h3_stats = spark.sql(f"""
@@ -241,6 +281,11 @@ spark.sql(f"""
     JOIN {catalog_name}.{schema_name}.parcel_geometric_features g1 ON c.parcel_1 = g1.parcel_id
     JOIN {catalog_name}.{schema_name}.parcel_geometric_features g2 ON c.parcel_2 = g2.parcel_id
     WHERE ST_Intersects(g1.geometry, g2.geometry)
+      -- Safety net: exclude any giant parcels that slipped through H3 filtering.
+      -- Without this, parcels with ~88km perimeters produce nonsensical
+      -- shared_boundary_m values (e.g. 87,879m for every pair).
+      AND g1.area_sqm < {MAX_PARCEL_AREA_SQM}
+      AND g2.area_sqm < {MAX_PARCEL_AREA_SQM}
 """)
 
 adj_count = spark.sql(f"""

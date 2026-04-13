@@ -48,7 +48,8 @@ env/
 *.pem
 *.key
 
-# Local deployment docs
+# Local docs
 DEPLOY.md
+LEARNINGS.md
 DEBUGGING_REPORT.md
 FIX_SUMMARY.md

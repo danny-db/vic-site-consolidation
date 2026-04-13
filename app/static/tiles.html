@@ -169,6 +169,7 @@
                 data: buildTileUrl(),
                 minZoom: 8,
                 maxZoom: 16,
+                refinementStrategy: 'no-overlap',
                 getFillColor: f => {
                     const tier = f.properties.suitability_tier;
                     // Client-side tier filter

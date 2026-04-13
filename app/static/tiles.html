@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VIC Site Consolidation Viewer</title>
+    <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
+    <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet" />
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+        #map { width: 100vw; height: 100vh; }
+        #controls {
+            position: absolute; top: 10px; left: 10px; z-index: 1;
+            background: rgba(255,255,255,0.95); border-radius: 8px;
+            padding: 16px; width: 280px; box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            max-height: 90vh; overflow-y: auto;
+        }
+        h1 { font-size: 16px; margin-bottom: 12px; color: #1a1a2e; }
+        .filter-group { margin-bottom: 10px; }
+        .filter-group > label { display: block; font-size: 11px; font-weight: 600; color: #666; margin-bottom: 3px; text-transform: uppercase; }
+        select, input[type="number"] { width: 100%; padding: 6px 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px; }
+        button { width: 100%; padding: 8px; background: #1a73e8; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 600; margin-top: 8px; }
+        button:hover { background: #1557b0; }
+        .stats { margin-top: 12px; padding-top: 12px; border-top: 1px solid #eee; }
+        .stat-row { display: flex; justify-content: space-between; font-size: 12px; padding: 2px 0; }
+        .stat-label { color: #666; }
+        .stat-value { font-weight: 600; }
+        #legend { margin-top: 12px; }
+        .legend-item { display: flex; align-items: center; font-size: 11px; padding: 2px 0; }
+        .legend-dot { width: 14px; height: 14px; border-radius: 2px; margin-right: 6px; flex-shrink: 0; }
+        .checkbox-group { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+        .checkbox-group label { font-size: 12px; text-transform: none; font-weight: normal; }
+
+        /* Multi-select dropdown */
+        .multi-select { position: relative; }
+        .multi-select-btn {
+            width: 100%; padding: 6px 8px; border: 1px solid #ddd; border-radius: 4px;
+            font-size: 13px; background: white; cursor: pointer; text-align: left;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .multi-select-btn::after { content: '\25BC'; font-size: 9px; color: #999; margin-left: 6px; flex-shrink: 0; }
+        .multi-select-btn.open::after { content: '\25B2'; }
+        .multi-select-dropdown {
+            display: none; position: absolute; top: 100%; left: 0; right: 0;
+            background: white; border: 1px solid #ddd; border-top: none;
+            border-radius: 0 0 4px 4px; z-index: 10; max-height: 200px; overflow-y: auto;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        .multi-select-dropdown.open { display: block; }
+        .multi-select-dropdown label {
+            display: flex; align-items: center; gap: 6px; padding: 6px 8px;
+            font-size: 12px; cursor: pointer; text-transform: none; font-weight: normal;
+        }
+        .multi-select-dropdown label:hover { background: #f5f5f5; }
+        .multi-select-dropdown input[type="checkbox"] { margin: 0; }
+        .tier-dot { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+
+        .maplibregl-popup-content { padding: 10px 14px !important; font-size: 12px; line-height: 1.6; }
+        .maplibregl-popup-content b { font-size: 13px; }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <div id="controls">
+        <h1>Site Consolidation Viewer</h1>
+
+        <div class="filter-group">
+            <label>Suitability Tier</label>
+            <div class="multi-select" id="tierMultiSelect">
+                <div class="multi-select-btn" id="tierBtn">All Tiers</div>
+                <div class="multi-select-dropdown" id="tierDropdown">
+                    <label><input type="checkbox" value="Tier 1 - Excellent" class="tier-cb" /><span class="tier-dot" style="background:#d7191c"></span>Tier 1 - Excellent</label>
+                    <label><input type="checkbox" value="Tier 2 - Very Good" class="tier-cb" /><span class="tier-dot" style="background:#fdae61"></span>Tier 2 - Very Good</label>
+                    <label><input type="checkbox" value="Tier 3 - Good" class="tier-cb" /><span class="tier-dot" style="background:#fee08b"></span>Tier 3 - Good</label>
+                    <label><input type="checkbox" value="Tier 4 - Moderate" class="tier-cb" /><span class="tier-dot" style="background:#a6d96a"></span>Tier 4 - Moderate</label>
+                    <label><input type="checkbox" value="Tier 5 - Low" class="tier-cb" /><span class="tier-dot" style="background:#1a9641"></span>Tier 5 - Low</label>
+                </div>
+            </div>
+        </div>
+        <div class="filter-group">
+            <label>LGA</label>
+            <select id="lgaFilter"><option value="">All LGAs</option></select>
+        </div>
+        <div class="filter-group">
+            <label>Min Score</label>
+            <input type="number" id="minScore" value="" placeholder="0" min="-100" max="200" />
+        </div>
+        <div class="filter-group">
+            <div class="checkbox-group">
+                <input type="checkbox" id="excludeGrowth" />
+                <label for="excludeGrowth">Exclude growth-area LGAs</label>
+            </div>
+        </div>
+        <button onclick="applyFilters()">Apply Filters</button>
+
+        <div class="stats" id="statsPanel"></div>
+
+        <div id="legend">
+            <div class="legend-item"><div class="legend-dot" style="background:#d7191c"></div>Tier 1 - Excellent</div>
+            <div class="legend-item"><div class="legend-dot" style="background:#fdae61"></div>Tier 2 - Very Good</div>
+            <div class="legend-item"><div class="legend-dot" style="background:#fee08b"></div>Tier 3 - Good</div>
+            <div class="legend-item"><div class="legend-dot" style="background:#a6d96a"></div>Tier 4 - Moderate</div>
+            <div class="legend-item"><div class="legend-dot" style="background:#1a9641"></div>Tier 5 - Low</div>
+        </div>
+    </div>
+
+    <script>
+        const TIER_COLORS = {
+            'Tier 1 - Excellent': '#d7191c',
+            'Tier 2 - Very Good': '#fdae61',
+            'Tier 3 - Good': '#fee08b',
+            'Tier 4 - Moderate': '#a6d96a',
+            'Tier 5 - Low': '#1a9641',
+        };
+
+        /* --- Multi-select tier dropdown --- */
+        const tierBtn = document.getElementById('tierBtn');
+        const tierDropdown = document.getElementById('tierDropdown');
+        const tierCheckboxes = document.querySelectorAll('.tier-cb');
+
+        tierBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            tierBtn.classList.toggle('open');
+            tierDropdown.classList.toggle('open');
+        });
+        document.addEventListener('click', () => {
+            tierBtn.classList.remove('open');
+            tierDropdown.classList.remove('open');
+        });
+        tierDropdown.addEventListener('click', (e) => e.stopPropagation());
+
+        function getSelectedTiers() {
+            return Array.from(tierCheckboxes).filter(cb => cb.checked).map(cb => cb.value);
+        }
+
+        tierCheckboxes.forEach(cb => {
+            cb.addEventListener('change', () => {
+                const sel = getSelectedTiers();
+                tierBtn.textContent = sel.length === 0 ? 'All Tiers'
+                    : sel.length <= 2 ? sel.map(s => s.replace('Tier ', 'T')).join(', ')
+                    : `${sel.length} tiers selected`;
+                applyClientFilter();
+            });
+        });
+
+        /* --- Build tile URL with server-side filters --- */
+        function buildTileUrl() {
+            const lga = document.getElementById('lgaFilter').value;
+            const minScore = document.getElementById('minScore').value;
+            const excludeGrowth = document.getElementById('excludeGrowth').checked;
+
+            const params = new URLSearchParams();
+            if (lga) params.set('lga', lga);
+            if (minScore && parseInt(minScore) !== 0) params.set('min_score', minScore);
+            if (excludeGrowth) params.set('exclude_growth_areas', 'true');
+
+            const qs = params.toString();
+            return `${location.origin}/api/tiles/{z}/{x}/{y}.pbf${qs ? '?' + qs : ''}`;
+        }
+
+        /* --- Map --- */
+        const map = new maplibregl.Map({
+            container: 'map',
+            style: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+            center: [145.30, -38.08],
+            zoom: 11,
+            pitch: 0,
+        });
+
+        map.addControl(new maplibregl.NavigationControl(), 'top-right');
+
+        let popup = null;
+        let hoveredFeatureId = null;
+
+        map.on('load', () => {
+            // Add vector tile source
+            map.addSource('parcels', {
+                type: 'vector',
+                tiles: [buildTileUrl()],
+                minzoom: 8,
+                maxzoom: 16,
+            });
+
+            // Fill layer with tier-based colors
+            map.addLayer({
+                id: 'parcels-fill',
+                type: 'fill',
+                source: 'parcels',
+                'source-layer': 'parcels',
+                paint: {
+                    'fill-color': [
+                        'match', ['get', 'suitability_tier'],
+                        'Tier 1 - Excellent', '#d7191c',
+                        'Tier 2 - Very Good', '#fdae61',
+                        'Tier 3 - Good', '#fee08b',
+                        'Tier 4 - Moderate', '#a6d96a',
+                        'Tier 5 - Low', '#1a9641',
+                        '#888888'
+                    ],
+                    'fill-opacity': 0.7,
+                },
+            });
+
+            // Outline layer
+            map.addLayer({
+                id: 'parcels-line',
+                type: 'line',
+                source: 'parcels',
+                'source-layer': 'parcels',
+                paint: {
+                    'line-color': '#282828',
+                    'line-width': [
+                        'interpolate', ['linear'], ['zoom'],
+                        10, 0.1,
+                        14, 0.5,
+                        16, 1.5,
+                    ],
+                    'line-opacity': 0.6,
+                },
+            });
+
+            // Highlight layer (invisible until hovered)
+            map.addLayer({
+                id: 'parcels-highlight',
+                type: 'fill',
+                source: 'parcels',
+                'source-layer': 'parcels',
+                paint: {
+                    'fill-color': '#ffffff',
+                    'fill-opacity': 0.4,
+                },
+                filter: ['==', ['get', 'parcel_id'], ''],
+            });
+
+            // Hover effect
+            map.on('mousemove', 'parcels-fill', (e) => {
+                map.getCanvas().style.cursor = 'pointer';
+                if (e.features.length > 0) {
+                    const id = e.features[0].properties.parcel_id;
+                    if (hoveredFeatureId !== id) {
+                        hoveredFeatureId = id;
+                        map.setFilter('parcels-highlight', ['==', ['get', 'parcel_id'], id]);
+                    }
+                }
+            });
+
+            map.on('mouseleave', 'parcels-fill', () => {
+                map.getCanvas().style.cursor = '';
+                hoveredFeatureId = null;
+                map.setFilter('parcels-highlight', ['==', ['get', 'parcel_id'], '']);
+            });
+
+            // Click tooltip
+            map.on('click', 'parcels-fill', (e) => {
+                if (e.features.length === 0) return;
+                const p = e.features[0].properties;
+                const html = `
+                    <b>${p.parcel_id}</b><br/>
+                    Zone: ${p.zone_code || 'N/A'}<br/>
+                    LGA: ${p.lga_name || 'N/A'}<br/>
+                    Area: ${(p.area_sqm || 0).toLocaleString()} sqm<br/>
+                    Score: <b>${p.suitability_score}</b><br/>
+                    Tier: ${p.suitability_tier}<br/>
+                    Neighbors: ${p.num_adjacent_parcels || 0}<br/>
+                    Nearest PT: ${(p.nearest_any_pt_m || 0).toLocaleString()}m
+                    ${p.is_growth_area_lga ? '<br/><span style="color:#ff9800">Growth Area LGA</span>' : ''}
+                `;
+
+                if (popup) popup.remove();
+                popup = new maplibregl.Popup({ closeOnClick: true, maxWidth: '260px' })
+                    .setLngLat(e.lngLat)
+                    .setHTML(html)
+                    .addTo(map);
+            });
+
+            // Load LGA options
+            loadLgaOptions();
+        });
+
+        /* --- Client-side tier filter (instant, no tile refetch) --- */
+        function applyClientFilter() {
+            const tiers = getSelectedTiers();
+            if (tiers.length === 0) {
+                // Show all tiers
+                map.setFilter('parcels-fill', null);
+                map.setFilter('parcels-line', null);
+            } else {
+                const filter = ['in', ['get', 'suitability_tier'], ['literal', tiers]];
+                map.setFilter('parcels-fill', filter);
+                map.setFilter('parcels-line', filter);
+            }
+        }
+
+        /* --- Server-side filters (LGA, min_score, exclude_growth) — requires tile refetch --- */
+        function applyFilters() {
+            const source = map.getSource('parcels');
+            if (source) {
+                source.setTiles([buildTileUrl()]);
+            }
+            applyClientFilter();
+        }
+
+        /* --- Load LGA dropdown --- */
+        async function loadLgaOptions() {
+            try {
+                const resp = await fetch('/api/stats/lgas');
+                const lgas = await resp.json();
+                const lgaSelect = document.getElementById('lgaFilter');
+                lgas.forEach(l => {
+                    const opt = document.createElement('option');
+                    opt.value = l.lga_name;
+                    opt.textContent = `${l.lga_name} (${l.parcel_count})${l.growth_area ? ' *' : ''}`;
+                    lgaSelect.appendChild(opt);
+                });
+            } catch (err) {
+                console.warn('Could not load LGA list:', err);
+            }
+        }
+    </script>
+</body>
+</html>

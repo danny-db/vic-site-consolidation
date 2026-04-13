@@ -61,8 +61,17 @@ if os.path.isdir(static_dir):
 
 @app.get("/")
 async def root():
-    """Serve the frontend."""
-    index_path = os.path.join(static_dir, "index.html")
-    if os.path.exists(index_path):
-        return FileResponse(index_path)
-    return {"message": "VIC Site Consolidation API", "docs": "/docs"}
+    """Landing page with links to both viewer modes."""
+    return FileResponse(os.path.join(static_dir, "index.html"))
+
+
+@app.get("/tiles")
+async def tiles_viewer():
+    """Vector tile viewer (MVT) — fast pan/zoom, all 4.28M parcels."""
+    return FileResponse(os.path.join(static_dir, "tiles.html"))
+
+
+@app.get("/stream")
+async def stream_viewer():
+    """Streaming GeoJSON viewer (deck.gl) — loads all parcels in a single LGA."""
+    return FileResponse(os.path.join(static_dir, "stream.html"))

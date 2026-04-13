@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>VIC Site Consolidation Viewer</title>
-    <script src="https://unpkg.com/deck.gl@9.0.16/dist.min.js"></script>
     <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
     <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet" />
     <style>
@@ -21,9 +20,6 @@
         .filter-group { margin-bottom: 10px; }
         .filter-group > label { display: block; font-size: 11px; font-weight: 600; color: #666; margin-bottom: 3px; text-transform: uppercase; }
         select, input[type="number"] { width: 100%; padding: 6px 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px; }
-        input[type="range"] { width: 100%; margin-top: 4px; accent-color: #1a73e8; }
-        .range-labels { display: flex; justify-content: space-between; font-size: 10px; color: #999; margin-top: 2px; }
-        .range-value { font-size: 13px; font-weight: 600; color: #1a73e8; }
         button { width: 100%; padding: 8px; background: #1a73e8; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 600; margin-top: 8px; }
         button:hover { background: #1557b0; }
         .stats { margin-top: 12px; padding-top: 12px; border-top: 1px solid #eee; }
@@ -35,13 +31,6 @@
         .legend-dot { width: 14px; height: 14px; border-radius: 2px; margin-right: 6px; flex-shrink: 0; }
         .checkbox-group { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
         .checkbox-group label { font-size: 12px; text-transform: none; font-weight: normal; }
-        #loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-                   z-index: 3; background: white; padding: 24px 32px; border-radius: 8px;
-                   box-shadow: 0 4px 16px rgba(0,0,0,0.2); font-size: 14px; text-align: center; }
-        #loading .spinner { display: inline-block; width: 20px; height: 20px; border: 3px solid #ddd;
-                            border-top-color: #1a73e8; border-radius: 50%; animation: spin 0.8s linear infinite;
-                            margin-right: 10px; vertical-align: middle; }
-        @keyframes spin { to { transform: rotate(360deg); } }
 
         /* Multi-select dropdown */
         .multi-select { position: relative; }
@@ -67,19 +56,16 @@
         .multi-select-dropdown label:hover { background: #f5f5f5; }
         .multi-select-dropdown input[type="checkbox"] { margin: 0; }
         .tier-dot { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+
+        .maplibregl-popup-content { padding: 10px 14px !important; font-size: 12px; line-height: 1.6; }
+        .maplibregl-popup-content b { font-size: 13px; }
     </style>
 </head>
 <body>
-    <div id="loading"><span class="spinner"></span>Loading all parcels...</div>
     <div id="map"></div>
     <div id="controls">
         <h1>Site Consolidation Viewer</h1>
 
-        <div class="filter-group">
-            <label>Display Limit <span class="range-value" id="limitValue">All</span></label>
-            <input type="range" id="limitSlider" min="1000" max="200000" step="1000" value="200000" />
-            <div class="range-labels"><span>1,000</span><span>200,000 (All)</span></div>
-        </div>
         <div class="filter-group">
             <label>Suitability Tier</label>
             <div class="multi-select" id="tierMultiSelect">
@@ -107,7 +93,7 @@
                 <label for="excludeGrowth">Exclude growth-area LGAs</label>
             </div>
         </div>
-        <button onclick="loadData()">Apply Filters</button>
+        <button onclick="applyFilters()">Apply Filters</button>
 
         <div class="stats" id="statsPanel"></div>
 
@@ -122,17 +108,12 @@
 
     <script>
         const TIER_COLORS = {
-            'Tier 1 - Excellent': [215, 25, 28],
-            'Tier 2 - Very Good': [253, 174, 97],
-            'Tier 3 - Good': [254, 224, 139],
-            'Tier 4 - Moderate': [166, 217, 106],
-            'Tier 5 - Low': [26, 150, 65],
+            'Tier 1 - Excellent': '#d7191c',
+            'Tier 2 - Very Good': '#fdae61',
+            'Tier 3 - Good': '#fee08b',
+            'Tier 4 - Moderate': '#a6d96a',
+            'Tier 5 - Low': '#1a9641',
         };
-
-        const TOTAL_PARCELS = 200000;
-        let deckgl = null;
-        let geojsonData = null;
-        let lastEtag = null;
 
         /* --- Multi-select tier dropdown --- */
         const tierBtn = document.getElementById('tierBtn');
@@ -160,203 +141,172 @@
                 tierBtn.textContent = sel.length === 0 ? 'All Tiers'
                     : sel.length <= 2 ? sel.map(s => s.replace('Tier ', 'T')).join(', ')
                     : `${sel.length} tiers selected`;
+                applyClientFilter();
             });
         });
 
-        /* --- Limit slider --- */
-        const limitSlider = document.getElementById('limitSlider');
-        const limitValue = document.getElementById('limitValue');
-        limitSlider.addEventListener('input', () => {
-            const v = parseInt(limitSlider.value);
-            limitValue.textContent = v >= TOTAL_PARCELS ? 'All' : v.toLocaleString();
-        });
-
-        /* --- Data loading with NDJSON streaming --- */
-        let lastParamsStr = null;
-        let streamAbortController = null;
-
-        function buildParams() {
-            const tiers = getSelectedTiers();
+        /* --- Build tile URL with server-side filters --- */
+        function buildTileUrl() {
             const lga = document.getElementById('lgaFilter').value;
             const minScore = document.getElementById('minScore').value;
             const excludeGrowth = document.getElementById('excludeGrowth').checked;
-            const limit = parseInt(limitSlider.value);
 
             const params = new URLSearchParams();
-            tiers.forEach(t => params.append('tier', t));
             if (lga) params.set('lga', lga);
             if (minScore && parseInt(minScore) !== 0) params.set('min_score', minScore);
             if (excludeGrowth) params.set('exclude_growth_areas', 'true');
-            params.set('limit', String(limit));
-            return params;
+
+            const qs = params.toString();
+            return `${location.origin}/api/tiles/{z}/{x}/{y}.pbf${qs ? '?' + qs : ''}`;
         }
 
-        async function loadData() {
-            const params = buildParams();
-            const paramsStr = params.toString();
+        /* --- Map --- */
+        const map = new maplibregl.Map({
+            container: 'map',
+            style: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+            center: [145.30, -38.08],
+            zoom: 11,
+            pitch: 0,
+        });
 
-            // Client-side cache: same filters → reuse instantly
-            if (paramsStr === lastParamsStr && geojsonData) {
-                updateMap();
-                updateStats();
-                return;
-            }
+        map.addControl(new maplibregl.NavigationControl(), 'top-right');
 
-            // Abort any in-flight stream
-            if (streamAbortController) {
-                streamAbortController.abort();
-            }
-            streamAbortController = new AbortController();
+        let popup = null;
+        let hoveredFeatureId = null;
 
-            lastParamsStr = paramsStr;
-            const loading = document.getElementById('loading');
-            loading.style.display = 'block';
-            loading.innerHTML = '<span class="spinner"></span>Streaming parcels...';
+        map.on('load', () => {
+            // Add vector tile source
+            map.addSource('parcels', {
+                type: 'vector',
+                tiles: [buildTileUrl()],
+                minzoom: 8,
+                maxzoom: 16,
+            });
 
-            try {
-                const resp = await fetch(`/api/parcels/geojson/stream?${params}`, {
-                    signal: streamAbortController.signal,
-                });
-                const reader = resp.body.getReader();
-                const decoder = new TextDecoder();
-
-                let buffer = '';
-                let features = [];
-                let lastRenderCount = 0;
-                const startTime = performance.now();
-
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-
-                    buffer += decoder.decode(value, { stream: true });
-                    const lines = buffer.split('\n');
-                    buffer = lines.pop(); // keep incomplete last line
-
-                    for (const line of lines) {
-                        if (!line.trim()) continue;
-                        const parsed = JSON.parse(line);
-                        if (parsed._meta) continue; // skip metadata line
-                        features.push(parsed);
-                    }
-
-                    // Adaptive batch rendering: fast at start, fewer updates later
-                    const count = features.length;
-                    const batch = count < 2000 ? 500
-                                : count < 10000 ? 2000
-                                : 5000;
-                    if (count - lastRenderCount >= batch) {
-                        geojsonData = { type: 'FeatureCollection', features };
-                        updateMap();
-                        const elapsed = ((performance.now() - startTime) / 1000).toFixed(1);
-                        loading.innerHTML = `<span class="spinner"></span>${count.toLocaleString()} parcels (${elapsed}s)`;
-                        lastRenderCount = count;
-                    }
-                }
-
-                // Process remaining buffer
-                if (buffer.trim()) {
-                    const parsed = JSON.parse(buffer);
-                    if (!parsed._meta) features.push(parsed);
-                }
-
-                // Final render
-                geojsonData = { type: 'FeatureCollection', features };
-                updateMap();
-                updateStats();
-                const totalTime = ((performance.now() - startTime) / 1000).toFixed(1);
-                loading.innerHTML = `${features.length.toLocaleString()} parcels loaded in ${totalTime}s`;
-                setTimeout(() => { loading.style.display = 'none'; }, 1500);
-            } catch (err) {
-                if (err.name === 'AbortError') return; // cancelled by new request
-                console.error('Failed to load data:', err);
-                loading.innerHTML = 'Error loading data. Check API connection.';
-            }
-        }
-
-        function updateMap() {
-            const layer = new deck.GeoJsonLayer({
-                id: 'parcels',
-                data: geojsonData,
-                filled: true,
-                stroked: true,
-                getFillColor: f => {
-                    const color = TIER_COLORS[f.properties.suitability_tier] || [128, 128, 128];
-                    return [...color, 180];
+            // Fill layer with tier-based colors
+            map.addLayer({
+                id: 'parcels-fill',
+                type: 'fill',
+                source: 'parcels',
+                'source-layer': 'parcels',
+                paint: {
+                    'fill-color': [
+                        'match', ['get', 'suitability_tier'],
+                        'Tier 1 - Excellent', '#d7191c',
+                        'Tier 2 - Very Good', '#fdae61',
+                        'Tier 3 - Good', '#fee08b',
+                        'Tier 4 - Moderate', '#a6d96a',
+                        'Tier 5 - Low', '#1a9641',
+                        '#888888'
+                    ],
+                    'fill-opacity': 0.7,
                 },
-                getLineColor: [40, 40, 40, 200],
-                getLineWidth: 1,
-                lineWidthMinPixels: 0.5,
-                lineWidthMaxPixels: 2,
-                pickable: true,
-                autoHighlight: true,
-                highlightColor: [255, 255, 255, 100],
             });
 
-            if (!deckgl) {
-                deckgl = new deck.DeckGL({
-                    container: 'map',
-                    mapStyle: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
-                    initialViewState: {
-                        longitude: 145.30,
-                        latitude: -38.08,
-                        zoom: 11,
-                        pitch: 45,
-                        bearing: -15,
-                    },
-                    controller: true,
-                    layers: [layer],
-                    getTooltip: ({object}) => {
-                        if (!object || !object.properties) return null;
-                        const p = object.properties;
-                        return {
-                            html: `
-                                <b>${p.parcel_id}</b><br/>
-                                Zone: ${p.zone_code || 'N/A'}<br/>
-                                LGA: ${p.lga_name || 'N/A'}<br/>
-                                Area: ${(p.area_sqm || 0).toFixed(0)} sqm<br/>
-                                Score: <b>${p.suitability_score}</b><br/>
-                                Tier: ${p.suitability_tier}<br/>
-                                Neighbors: ${p.num_adjacent_parcels || 0}<br/>
-                                Nearest PT: ${(p.nearest_any_pt_m || 0).toFixed(0)}m
-                                ${p.is_growth_area_lga ? '<br/><span style="color:#ff9800">Growth Area LGA</span>' : ''}
-                            `,
-                            style: { backgroundColor: 'rgba(0,0,0,0.85)', color: 'white', fontSize: '12px', padding: '10px 14px', borderRadius: '6px' }
-                        };
+            // Outline layer
+            map.addLayer({
+                id: 'parcels-line',
+                type: 'line',
+                source: 'parcels',
+                'source-layer': 'parcels',
+                paint: {
+                    'line-color': '#282828',
+                    'line-width': [
+                        'interpolate', ['linear'], ['zoom'],
+                        10, 0.1,
+                        14, 0.5,
+                        16, 1.5,
+                    ],
+                    'line-opacity': 0.6,
+                },
+            });
+
+            // Highlight layer (invisible until hovered)
+            map.addLayer({
+                id: 'parcels-highlight',
+                type: 'fill',
+                source: 'parcels',
+                'source-layer': 'parcels',
+                paint: {
+                    'fill-color': '#ffffff',
+                    'fill-opacity': 0.4,
+                },
+                filter: ['==', ['get', 'parcel_id'], ''],
+            });
+
+            // Hover effect
+            map.on('mousemove', 'parcels-fill', (e) => {
+                map.getCanvas().style.cursor = 'pointer';
+                if (e.features.length > 0) {
+                    const id = e.features[0].properties.parcel_id;
+                    if (hoveredFeatureId !== id) {
+                        hoveredFeatureId = id;
+                        map.setFilter('parcels-highlight', ['==', ['get', 'parcel_id'], id]);
                     }
-                });
+                }
+            });
+
+            map.on('mouseleave', 'parcels-fill', () => {
+                map.getCanvas().style.cursor = '';
+                hoveredFeatureId = null;
+                map.setFilter('parcels-highlight', ['==', ['get', 'parcel_id'], '']);
+            });
+
+            // Click tooltip
+            map.on('click', 'parcels-fill', (e) => {
+                if (e.features.length === 0) return;
+                const p = e.features[0].properties;
+                const html = `
+                    <b>${p.parcel_id}</b><br/>
+                    Zone: ${p.zone_code || 'N/A'}<br/>
+                    LGA: ${p.lga_name || 'N/A'}<br/>
+                    Area: ${(p.area_sqm || 0).toLocaleString()} sqm<br/>
+                    Score: <b>${p.suitability_score}</b><br/>
+                    Tier: ${p.suitability_tier}<br/>
+                    Neighbors: ${p.num_adjacent_parcels || 0}<br/>
+                    Nearest PT: ${(p.nearest_any_pt_m || 0).toLocaleString()}m
+                    ${p.is_growth_area_lga ? '<br/><span style="color:#ff9800">Growth Area LGA</span>' : ''}
+                `;
+
+                if (popup) popup.remove();
+                popup = new maplibregl.Popup({ closeOnClick: true, maxWidth: '260px' })
+                    .setLngLat(e.lngLat)
+                    .setHTML(html)
+                    .addTo(map);
+            });
+
+            // Load LGA options
+            loadLgaOptions();
+        });
+
+        /* --- Client-side tier filter (instant, no tile refetch) --- */
+        function applyClientFilter() {
+            const tiers = getSelectedTiers();
+            if (tiers.length === 0) {
+                // Show all tiers
+                map.setFilter('parcels-fill', null);
+                map.setFilter('parcels-line', null);
             } else {
-                deckgl.setProps({ layers: [layer] });
+                const filter = ['in', ['get', 'suitability_tier'], ['literal', tiers]];
+                map.setFilter('parcels-fill', filter);
+                map.setFilter('parcels-line', filter);
             }
         }
 
-        function updateStats() {
-            const panel = document.getElementById('statsPanel');
-            const features = geojsonData.features || [];
-            const total = features.length;
-            const tiers = {};
-            features.forEach(f => {
-                const t = f.properties.suitability_tier;
-                tiers[t] = (tiers[t] || 0) + 1;
-            });
-            const avgScore = total > 0
-                ? (features.reduce((s, f) => s + (f.properties.suitability_score || 0), 0) / total).toFixed(1)
-                : 0;
-            const growthCount = features.filter(f => f.properties.is_growth_area_lga).length;
-
-            panel.innerHTML = `
-                <div class="stat-row"><span class="stat-label">Parcels shown</span><span class="stat-value">${total.toLocaleString()}</span></div>
-                <div class="stat-row"><span class="stat-label">Avg score</span><span class="stat-value">${avgScore}</span></div>
-                <div class="stat-row"><span class="stat-label">Growth-area</span><span class="stat-value">${growthCount.toLocaleString()}</span></div>
-                ${Object.entries(tiers).sort().map(([k,v]) => `<div class="stat-row"><span class="stat-label">${k.replace('Tier ','T')}</span><span class="stat-value">${v.toLocaleString()}</span></div>`).join('')}
-            `;
+        /* --- Server-side filters (LGA, min_score, exclude_growth) — requires tile refetch --- */
+        function applyFilters() {
+            const source = map.getSource('parcels');
+            if (source) {
+                source.setTiles([buildTileUrl()]);
+            }
+            applyClientFilter();
         }
 
-        // Load LGA options on startup
-        async function init() {
+        /* --- Load LGA dropdown --- */
+        async function loadLgaOptions() {
             try {
-                const lgaResp = await fetch('/api/stats/lgas');
-                const lgas = await lgaResp.json();
+                const resp = await fetch('/api/stats/lgas');
+                const lgas = await resp.json();
                 const lgaSelect = document.getElementById('lgaFilter');
                 lgas.forEach(l => {
                     const opt = document.createElement('option');
@@ -367,12 +317,7 @@
             } catch (err) {
                 console.warn('Could not load LGA list:', err);
             }
-            // Default to CASEY LGA
-            document.getElementById('lgaFilter').value = 'CASEY';
-            await loadData();
         }
-
-        init();
     </script>
 </body>
 </html>

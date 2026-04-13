@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse
 import os
 
 from db import get_pool, close_pool, fetch_one
-from routes import parcels, candidates, stats
+from routes import parcels, candidates, stats, tiles
 from models import HealthResponse
 
 
@@ -34,6 +34,7 @@ app = FastAPI(
 app.include_router(parcels.router)
 app.include_router(candidates.router)
 app.include_router(stats.router)
+app.include_router(tiles.router)
 
 
 @app.get("/api/health", response_model=HealthResponse)

@@ -2,19 +2,22 @@
 # MAGIC %md
 # MAGIC # 06 — Lakebase MVT (Vector Tile) Setup
 # MAGIC
-# MAGIC This notebook creates the **`candidates_mvt`** table in Lakebase with a native
-# MAGIC PostGIS geometry column and spatial index, enabling the Databricks App to serve
-# MAGIC **Mapbox Vector Tiles (MVT)** for high-performance map rendering.
+# MAGIC This notebook creates the **`candidates_mvt`** table in Lakebase with native
+# MAGIC PostGIS geometry columns and spatial indexes, enabling the Databricks App to
+# MAGIC serve **Mapbox Vector Tiles (MVT)** for high-performance map rendering.
 # MAGIC
 # MAGIC ## What this does
 # MAGIC 1. Connects to the Lakebase Autoscaling endpoint
-# MAGIC 2. Creates `candidates_mvt` from `consolidation_candidates_sync` with a native `geometry` column
-# MAGIC 3. Adds GIST spatial index + attribute indexes for fast tile queries
+# MAGIC 2. Creates `candidates_mvt` from `consolidation_candidates_sync` with:
+# MAGIC    - `geom` — native geometry in EPSG:4326 (for GeoJSON endpoints)
+# MAGIC    - `geom_3857` — pre-transformed EPSG:3857 (for fast MVT tile generation)
+# MAGIC 3. Adds GIST spatial indexes + attribute indexes for fast tile queries
 # MAGIC 4. Grants `SELECT` to `PUBLIC` so the App service principal can read the data
+# MAGIC 5. Scales up the Lakebase endpoint for better tile serving performance
 # MAGIC
 # MAGIC ## Prerequisites
 # MAGIC - Run **05_lakebase_sync.py** first (populates `consolidation_candidates_sync`)
-# MAGIC - Lakebase Autoscaling project `vic-site-consolidation` must exist
+# MAGIC - Lakebase Autoscaling project must exist
 # MAGIC
 # MAGIC ## When to run
 # MAGIC - Once after initial data sync
@@ -32,9 +35,10 @@ LAKEBASE_PROJECT = "vic-site-consolidation"
 LAKEBASE_DATABASE = "vic_consolidation_db"
 LAKEBASE_SCHEMA = "dtp_hackathon"
 
-# The Lakebase endpoint host is auto-resolved from the project.
-# If running outside the workspace, set this explicitly:
-# LAKEBASE_HOST = "ep-icy-sound-e1pdqoh3.database.eastus2.azuredatabricks.net"
+# Lakebase endpoint scaling for tile serving performance
+# Increase these if tile loading is slow under concurrent use
+LAKEBASE_MIN_CU = 2
+LAKEBASE_MAX_CU = 4
 
 # COMMAND ----------
 
@@ -62,16 +66,42 @@ endpoints = w.api_client.do(
 )
 endpoint = endpoints["endpoints"][0]
 pg_host = endpoint["status"]["hosts"]["host"]
+endpoint_name = endpoint["name"]
 pg_user = w.current_user.me().user_name
 
 print(f"Host: {pg_host}")
 print(f"User: {pg_user}")
 print(f"Database: {LAKEBASE_DATABASE}")
+print(f"Endpoint: {endpoint_name}")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Create MVT table with native geometry + spatial index
+# MAGIC ## Scale up Lakebase endpoint
+
+# COMMAND ----------
+
+print(f"Scaling endpoint to {LAKEBASE_MIN_CU}-{LAKEBASE_MAX_CU} CU...")
+try:
+    w.api_client.do(
+        "PATCH",
+        f"/api/2.0/postgres/{endpoint_name}",
+        body={
+            "settings": {
+                "autoscaling_limit_min_cu": LAKEBASE_MIN_CU,
+                "autoscaling_limit_max_cu": LAKEBASE_MAX_CU,
+            }
+        },
+    )
+    print(f"Endpoint scaled to {LAKEBASE_MIN_CU}-{LAKEBASE_MAX_CU} CU")
+except Exception as e:
+    print(f"Warning: Could not scale endpoint: {e}")
+    print("You may need to scale manually in the Lakebase UI")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Create MVT table with native geometry columns
 
 # COMMAND ----------
 
@@ -93,7 +123,8 @@ cur.execute(f"SET search_path TO {LAKEBASE_SCHEMA}, public;")
 
 # Drop and recreate the MVT table with both 4326 and 3857 geometry columns.
 # Pre-computing geom_3857 eliminates per-tile ST_Transform calls (~70% speedup).
-print("Creating candidates_mvt table...")
+# ST_Buffer(geom, 0) rebuilds clean topology to prevent MVT quantization artifacts.
+print("Creating candidates_mvt table (this takes a few minutes for 4M+ rows)...")
 cur.execute("DROP TABLE IF EXISTS candidates_mvt;")
 cur.execute("""
     CREATE TABLE candidates_mvt AS
@@ -103,7 +134,7 @@ cur.execute("""
            lots_in_plan, opportunity_score, constraint_score,
            suitability_score, suitability_tier, rank,
            ST_GeomFromText(geometry_wkt, 4326) AS geom,
-           ST_MakeValid(ST_Transform(ST_GeomFromText(geometry_wkt, 4326), 3857)) AS geom_3857
+           ST_Buffer(ST_MakeValid(ST_Transform(ST_GeomFromText(geometry_wkt, 4326), 3857)), 0) AS geom_3857
     FROM consolidation_candidates_sync
     WHERE geometry_wkt IS NOT NULL;
 """)
@@ -154,10 +185,10 @@ print("All indexes created.")
 cur.execute("GRANT SELECT ON candidates_mvt TO PUBLIC;")
 print("Granted SELECT on candidates_mvt to PUBLIC")
 
-# Also ensure the source table is accessible
-cur.execute("GRANT USAGE ON SCHEMA dtp_hackathon TO PUBLIC;")
-cur.execute("GRANT SELECT ON ALL TABLES IN SCHEMA dtp_hackathon TO PUBLIC;")
-cur.execute("ALTER DEFAULT PRIVILEGES IN SCHEMA dtp_hackathon GRANT SELECT ON TABLES TO PUBLIC;")
+# Also ensure all tables in schema are accessible to the App SP
+cur.execute(f"GRANT USAGE ON SCHEMA {LAKEBASE_SCHEMA} TO PUBLIC;")
+cur.execute(f"GRANT SELECT ON ALL TABLES IN SCHEMA {LAKEBASE_SCHEMA} TO PUBLIC;")
+cur.execute(f"ALTER DEFAULT PRIVILEGES IN SCHEMA {LAKEBASE_SCHEMA} GRANT SELECT ON TABLES TO PUBLIC;")
 print("Granted schema-wide permissions")
 
 # COMMAND ----------
@@ -169,29 +200,36 @@ print("Granted schema-wide permissions")
 
 cur.execute("""
     SELECT count(*) AS total,
-           count(geom) AS with_geom,
+           count(geom) AS with_geom_4326,
+           count(geom_3857) AS with_geom_3857,
            count(DISTINCT suitability_tier) AS tiers
     FROM candidates_mvt;
 """)
 row = cur.fetchone()
-print(f"Total rows: {row[0]:,}")
-print(f"With geometry: {row[1]:,}")
-print(f"Distinct tiers: {row[2]}")
+print(f"Total rows:       {row[0]:,}")
+print(f"With geom (4326): {row[1]:,}")
+print(f"With geom (3857): {row[2]:,}")
+print(f"Distinct tiers:   {row[3]}")
 
-# Test MVT generation for a sample tile (Melbourne CBD area, z=12)
+# Test MVT generation for a sample tile (Melbourne suburbs, z=14)
+# Using geom_3857 with ST_TileEnvelope (both in EPSG:3857)
 cur.execute("""
-    SELECT length(ST_AsMVT(tile, 'parcels', 4096, 'geom')) AS tile_bytes
+    SELECT length(ST_AsMVT(tile, 'parcels', 4096, 'geom')) AS tile_bytes,
+           count(*) AS features
     FROM (
-        SELECT ST_AsMVTGeom(geom, ST_TileEnvelope(12, 3657, 2516), 4096, 64, true) AS geom,
-               parcel_id, suitability_tier
+        SELECT ST_AsMVTGeom(
+            ST_Buffer(ST_SimplifyPreserveTopology(geom_3857, 0.5), 0),
+            ST_TileEnvelope(14, 14804, 10068),
+            4096, 256, true
+        ) AS geom,
+        parcel_id, suitability_tier
         FROM candidates_mvt
-        WHERE ST_Intersects(geom, ST_TileEnvelope(12, 3657, 2516))
-        LIMIT 10000
+        WHERE geom_3857 && ST_TileEnvelope(14, 14804, 10068)
     ) AS tile
     WHERE geom IS NOT NULL;
 """)
-tile_size = cur.fetchone()[0]
-print(f"Sample tile size: {tile_size:,} bytes")
+result = cur.fetchone()
+print(f"\nSample tile (z=14): {result[0]:,} bytes, {result[1]:,} features")
 
 cur.close()
 conn.close()

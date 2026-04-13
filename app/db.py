@@ -11,12 +11,18 @@ _refresh_lock = None
 
 
 def _get_lakebase_credentials() -> dict:
-    """Get Lakebase connection credentials from env vars."""
+    """Get Lakebase connection credentials from env vars.
+
+    Connection endpoint (host/port/database) prefers PG* vars injected by
+    the Lakebase App Resource, falling back to LAKEBASE_* env vars.
+    Auth (user/password) prefers LAKEBASE_* vars (native role) so the App
+    Resource SP token doesn't override explicit credentials.
+    """
     pg_host = os.getenv("PGHOST") or os.getenv("LAKEBASE_HOST", "localhost")
     pg_port = os.getenv("PGPORT") or os.getenv("LAKEBASE_PORT", "5432")
     pg_database = os.getenv("PGDATABASE") or os.getenv("LAKEBASE_DATABASE", "vic_consolidation_db")
-    pg_user = os.getenv("PGUSER") or os.getenv("LAKEBASE_USER", "vic_consolidation_app")
-    pg_password = os.getenv("PGPASSWORD") or os.getenv("LAKEBASE_PASSWORD", "")
+    pg_user = os.getenv("LAKEBASE_USER") or os.getenv("PGUSER", "vic_consolidation_app")
+    pg_password = os.getenv("LAKEBASE_PASSWORD") or os.getenv("PGPASSWORD", "")
 
     logger.info(f"Connecting as {pg_user} to {pg_host}:{pg_port}/{pg_database}")
 

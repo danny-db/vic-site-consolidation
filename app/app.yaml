@@ -1,5 +1,4 @@
 command:
-  - opentelemetry-instrument
   - uvicorn
   - app:app
   - --host
@@ -7,10 +6,14 @@ command:
   - --port
   - "8000"
 
+# To enable OTEL tracing:
+# 1. Enable App Telemetry in the Databricks UI (App details > App telemetry > Add)
+# 2. Set catalog/schema for otel_logs, otel_spans, otel_metrics tables
+# 3. Change command above to: [opentelemetry-instrument, uvicorn, app:app, --host, 0.0.0.0, --port, "8000"]
+# 4. Uncomment OTEL_TRACES_SAMPLER below
+# 5. Redeploy
+
 env:
   - name: LAKEBASE_SCHEMA
     description: "Postgres schema name"
     value: "dtp_hackathon"
-  - name: OTEL_TRACES_SAMPLER
-    description: "OpenTelemetry trace sampling strategy"
-    value: "always_on"

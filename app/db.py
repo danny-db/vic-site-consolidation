@@ -115,8 +115,10 @@ async def fetch_all(query: str, *args) -> list[dict]:
         async with pool.acquire() as conn:
             rows = await conn.fetch(query, *args)
             return [dict(row) for row in rows]
-    except asyncpg.exceptions.InvalidPasswordError:
-        logger.warning("Token expired, refreshing pool...")
+    except (asyncpg.exceptions.InvalidPasswordError,
+            asyncpg.exceptions.ConnectionDoesNotExistError,
+            asyncpg.exceptions.InterfaceError):
+        logger.warning("Connection error, refreshing pool...")
         await _refresh_pool()
         pool = await get_pool()
         async with pool.acquire() as conn:
@@ -152,8 +154,10 @@ async def fetch_one(query: str, *args) -> dict | None:
         async with pool.acquire() as conn:
             row = await conn.fetchrow(query, *args)
             return dict(row) if row else None
-    except asyncpg.exceptions.InvalidPasswordError:
-        logger.warning("Token expired, refreshing pool...")
+    except (asyncpg.exceptions.InvalidPasswordError,
+            asyncpg.exceptions.ConnectionDoesNotExistError,
+            asyncpg.exceptions.InterfaceError):
+        logger.warning("Connection error, refreshing pool...")
         await _refresh_pool()
         pool = await get_pool()
         async with pool.acquire() as conn:

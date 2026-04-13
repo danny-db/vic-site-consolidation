@@ -99,15 +99,16 @@ async def get_tile(
         conditions.append("is_growth_area_lga = false")
 
     # Use pre-computed geom_3857 directly — no ST_Transform or ST_MakeValid needed.
-    # clip_geom=false avoids tile-boundary clipping artifacts on small parcels.
+    # clip_geom=true clips parcels at tile edges to prevent overlap artifacts.
+    # (The earlier triangle issue was caused by CRS mismatch, now fixed.)
     tile_env = "ST_TileEnvelope($1, $2, $3)"
-    geom_expr = f"ST_AsMVTGeom(geom_3857, {tile_env}, 4096, 256, false)"
+    geom_expr = f"ST_AsMVTGeom(geom_3857, {tile_env}, 4096, 256, true)"
     if z < 10:
-        geom_expr = f"ST_AsMVTGeom(ST_Simplify(geom_3857, 50), {tile_env}, 4096, 256, false)"
+        geom_expr = f"ST_AsMVTGeom(ST_Simplify(geom_3857, 50), {tile_env}, 4096, 256, true)"
         if not tier:
             conditions.append("suitability_tier != 'Tier 5 - Low'")
     elif z < 12:
-        geom_expr = f"ST_AsMVTGeom(ST_Simplify(geom_3857, 10), {tile_env}, 4096, 256, false)"
+        geom_expr = f"ST_AsMVTGeom(ST_Simplify(geom_3857, 10), {tile_env}, 4096, 256, true)"
 
     where = " AND ".join(conditions)
 

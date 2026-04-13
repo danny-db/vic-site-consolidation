@@ -99,20 +99,23 @@ async def get_tile(
         conditions.append("is_growth_area_lga = false")
 
     # geom_3857 is pre-computed with ST_Buffer(geom, 0) for clean topology.
-    # Use it directly in ST_AsMVTGeom — no per-tile ST_Buffer or ST_Transform needed.
+    # Use extent=8192 (double the standard 4096) to prevent quantization
+    # artifacts — small cadastral polygons self-intersect when snapped to
+    # the 4096 integer grid, causing dark triangle rendering artifacts.
     tile_env = "ST_TileEnvelope($1, $2, $3)"
-    geom_expr = f"ST_AsMVTGeom(geom_3857, {tile_env}, 4096, 256, true)"
+    extent = 8192
+    geom_expr = f"ST_AsMVTGeom(geom_3857, {tile_env}, {extent}, 256, true)"
     if z < 10:
-        geom_expr = f"ST_AsMVTGeom(ST_Simplify(geom_3857, 50), {tile_env}, 4096, 256, true)"
+        geom_expr = f"ST_AsMVTGeom(ST_Simplify(geom_3857, 50), {tile_env}, {extent}, 256, true)"
         if not tier:
             conditions.append("suitability_tier != 'Tier 5 - Low'")
     elif z < 12:
-        geom_expr = f"ST_AsMVTGeom(ST_Simplify(geom_3857, 10), {tile_env}, 4096, 256, true)"
+        geom_expr = f"ST_AsMVTGeom(ST_Simplify(geom_3857, 10), {tile_env}, {extent}, 256, true)"
 
     where = " AND ".join(conditions)
 
     query = f"""
-        SELECT ST_AsMVT(tile, 'parcels', 4096, 'geom') AS mvt
+        SELECT ST_AsMVT(tile, 'parcels', {extent}, 'geom') AS mvt
         FROM (
             SELECT {geom_expr} AS geom, {MVT_PROPERTIES}
             FROM candidates_mvt

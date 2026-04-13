@@ -137,8 +137,10 @@ async def fetch_stream(query: str, *args):
             async with conn.transaction():
                 async for record in conn.cursor(query, *args, prefetch=5000):
                     yield dict(record)
-    except asyncpg.exceptions.InvalidPasswordError:
-        logger.warning("Token expired, refreshing pool for stream...")
+    except (asyncpg.exceptions.InvalidPasswordError,
+            asyncpg.exceptions.ConnectionDoesNotExistError,
+            asyncpg.exceptions.InterfaceError):
+        logger.warning("Connection error, refreshing pool for stream...")
         await _refresh_pool()
         pool = await get_pool()
         async with pool.acquire() as conn:

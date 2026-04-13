@@ -10,19 +10,39 @@ _pool = None
 _refresh_lock = None
 
 
+def _generate_lakebase_token() -> str:
+    """Generate an OAuth JWT token for Lakebase using the Databricks SDK."""
+    try:
+        from databricks.sdk import WorkspaceClient
+        w = WorkspaceClient()
+        token_info = w.api_client.do(
+            "POST",
+            "/api/2.0/postgres/generate-database-credential",
+            body={},
+        )
+        token = token_info.get("token", "")
+        logger.info("Generated Lakebase OAuth token via Databricks SDK")
+        return token
+    except Exception as e:
+        logger.warning(f"Failed to generate Lakebase token: {e}")
+        return ""
+
+
 def _get_lakebase_credentials() -> dict:
     """Get Lakebase connection credentials from env vars.
 
-    Connection endpoint (host/port/database) prefers PG* vars injected by
-    the Lakebase App Resource, falling back to LAKEBASE_* env vars.
-    Auth (user/password) prefers LAKEBASE_* vars (native role) so the App
-    Resource SP token doesn't override explicit credentials.
+    Uses PG* vars injected by the Lakebase App Resource for connection
+    endpoint, and generates a fresh OAuth token for authentication.
+    Falls back to LAKEBASE_* env vars for local dev / native role auth.
     """
     pg_host = os.getenv("PGHOST") or os.getenv("LAKEBASE_HOST", "localhost")
     pg_port = os.getenv("PGPORT") or os.getenv("LAKEBASE_PORT", "5432")
     pg_database = os.getenv("PGDATABASE") or os.getenv("LAKEBASE_DATABASE", "vic_consolidation_db")
-    pg_user = os.getenv("LAKEBASE_USER") or os.getenv("PGUSER", "vic_consolidation_app")
-    pg_password = os.getenv("LAKEBASE_PASSWORD") or os.getenv("PGPASSWORD", "")
+    pg_user = os.getenv("PGUSER") or os.getenv("LAKEBASE_USER", "vic_consolidation_app")
+
+    # Auth: use explicit LAKEBASE_PASSWORD if set (native role),
+    # otherwise generate an OAuth token for the SP (Lakebase resource mode)
+    pg_password = os.getenv("LAKEBASE_PASSWORD") or _generate_lakebase_token()
 
     logger.info(f"Connecting as {pg_user} to {pg_host}:{pg_port}/{pg_database}")
 

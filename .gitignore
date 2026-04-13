@@ -47,3 +47,8 @@ env/
 .env
 *.pem
 *.key
+
+# Local deployment docs
+DEPLOY.md
+DEBUGGING_REPORT.md
+FIX_SUMMARY.md

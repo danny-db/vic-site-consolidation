@@ -16,7 +16,7 @@ def _get_lakebase_credentials() -> dict:
     pg_port = os.getenv("PGPORT") or os.getenv("LAKEBASE_PORT", "5432")
     pg_database = os.getenv("PGDATABASE") or os.getenv("LAKEBASE_DATABASE", "vic_consolidation_db")
     pg_user = os.getenv("PGUSER") or os.getenv("LAKEBASE_USER", "vic_consolidation_app")
-    pg_password = os.getenv("LAKEBASE_PASSWORD", "")
+    pg_password = os.getenv("PGPASSWORD") or os.getenv("LAKEBASE_PASSWORD", "")
 
     logger.info(f"Connecting as {pg_user} to {pg_host}:{pg_port}/{pg_database}")
 

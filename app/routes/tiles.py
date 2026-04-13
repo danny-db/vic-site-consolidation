@@ -30,7 +30,12 @@ async def get_tile(
 ):
     """Return a Mapbox Vector Tile (MVT) for the given z/x/y coordinates."""
     # Build dynamic WHERE filters
-    conditions = ["geom IS NOT NULL", "ST_Intersects(geom, ST_TileEnvelope($1, $2, $3))"]
+    # ST_TileEnvelope returns EPSG:3857; our geom is EPSG:4326.
+    # Use ST_Transform to compare in 4326 for the spatial index hit.
+    conditions = [
+        "geom IS NOT NULL",
+        "ST_Intersects(geom, ST_Transform(ST_TileEnvelope($1, $2, $3), 4326))",
+    ]
     params: list = [z, x, y]
     idx = 4
 
@@ -55,14 +60,15 @@ async def get_tile(
     if exclude_growth_areas:
         conditions.append("is_growth_area_lga = false")
 
-    # At low zooms, skip Tier 5 (2.8M low-value parcels) and simplify geometry
-    geom_expr = "ST_AsMVTGeom(geom, ST_TileEnvelope($1, $2, $3), 4096, 64, true)"
+    # ST_AsMVTGeom needs geometry + bounds in EPSG:3857 (web mercator)
+    geom_3857 = "ST_Transform(geom, 3857)"
+    geom_expr = f"ST_AsMVTGeom({geom_3857}, ST_TileEnvelope($1, $2, $3), 4096, 64, true)"
     if z < 10:
-        geom_expr = "ST_AsMVTGeom(ST_Simplify(geom, 0.0005), ST_TileEnvelope($1, $2, $3), 4096, 64, true)"
+        geom_expr = f"ST_AsMVTGeom(ST_Simplify({geom_3857}, 50), ST_TileEnvelope($1, $2, $3), 4096, 64, true)"
         if not tier:
             conditions.append("suitability_tier != 'Tier 5 - Low'")
     elif z < 12:
-        geom_expr = "ST_AsMVTGeom(ST_Simplify(geom, 0.0001), ST_TileEnvelope($1, $2, $3), 4096, 64, true)"
+        geom_expr = f"ST_AsMVTGeom(ST_Simplify({geom_3857}, 10), ST_TileEnvelope($1, $2, $3), 4096, 64, true)"
 
     where = " AND ".join(conditions)
 

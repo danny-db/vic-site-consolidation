@@ -11,20 +11,17 @@ _refresh_lock = None
 
 
 def _generate_lakebase_token() -> str:
-    """Generate an OAuth JWT token for Lakebase using the Databricks SDK."""
+    """Get the app service principal's OAuth token for Lakebase auth."""
     try:
         from databricks.sdk import WorkspaceClient
         w = WorkspaceClient()
-        token_info = w.api_client.do(
-            "POST",
-            "/api/2.0/postgres/generate-database-credential",
-            body={},
-        )
-        token = token_info.get("token", "")
-        logger.info("Generated Lakebase OAuth token via Databricks SDK")
+        headers = w.config.authenticate()
+        token = headers.get("Authorization", "").removeprefix("Bearer ")
+        if token:
+            logger.info("Using SP OAuth token for Lakebase auth")
         return token
     except Exception as e:
-        logger.warning(f"Failed to generate Lakebase token: {e}")
+        logger.warning(f"Failed to get SP token: {e}")
         return ""
 
 

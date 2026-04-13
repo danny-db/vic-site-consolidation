@@ -1,4 +1,5 @@
 command:
+  - opentelemetry-instrument
   - uvicorn
   - app:app
   - --host
@@ -10,3 +11,6 @@ env:
   - name: LAKEBASE_SCHEMA
     description: "Postgres schema name"
     value: "dtp_hackathon"
+  - name: OTEL_TRACES_SAMPLER
+    description: "OpenTelemetry trace sampling strategy"
+    value: "always_on"

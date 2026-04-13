@@ -104,12 +104,56 @@ resources:
               schema_name: ${var.schema_name}
             source: WORKSPACE
 
+        # Stage 6: Lakebase MVT Setup (depends on lakebase sync)
+        - task_key: lakebase_mvt_setup
+          description: "Create MVT-ready table with PostGIS geometry columns, spatial indexes, and permissions"
+          depends_on:
+            - task_key: lakebase_sync
+          environment_key: serverless_env
+          notebook_task:
+            notebook_path: land_parcel_analysis/06_lakebase_mvt_setup.py
+            base_parameters:
+              catalog_name: ${var.catalog_name}
+              schema_name: ${var.schema_name}
+            source: WORKSPACE
+
       queue:
         enabled: true
 
       tags:
         project: vic-site-consolidation
         domain: land-parcel-analysis
+
+  apps:
+    vic-site-consolidation:
+      name: vic-site-consolidation
+      description: "Victorian land parcel site consolidation suitability viewer"
+      compute_size: LARGE
+
+      source_code_path: app
+
+      git_source:
+        git_url: https://github.com/danny-db/vic-site-consolidation
+        git_branch: main
+        git_provider: GITHUB
+
+      resources:
+        - name: lakebase-db
+          description: "Lakebase Autoscaling database for parcel data"
+          postgres:
+            branch: projects/vic-site-consolidation/branches/production
+            database: projects/vic-site-consolidation/branches/production/databases/db-7iny-oya9smntu4
+            permission: CAN_CONNECT_AND_CREATE
+
+      config:
+        - name: LAKEBASE_SCHEMA
+          value: ${var.schema_name}
+        - name: OTEL_TRACES_SAMPLER
+          value: "always_on"
+
+      telemetry:
+        catalog: ${var.catalog_name}
+        schema: ${var.schema_name}
 
 targets:
   dev:

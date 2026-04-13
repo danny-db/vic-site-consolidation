@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VIC Site Consolidation Viewer</title>
+    <title>VIC Site Consolidation — Vector Tiles</title>
+    <script src="https://unpkg.com/deck.gl@9.0.16/dist.min.js"></script>
     <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
     <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet" />
     <style>
@@ -32,7 +33,6 @@
         .checkbox-group { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
         .checkbox-group label { font-size: 12px; text-transform: none; font-weight: normal; }
 
-        /* Multi-select dropdown */
         .multi-select { position: relative; }
         .multi-select-btn {
             width: 100%; padding: 6px 8px; border: 1px solid #ddd; border-radius: 4px;
@@ -56,15 +56,12 @@
         .multi-select-dropdown label:hover { background: #f5f5f5; }
         .multi-select-dropdown input[type="checkbox"] { margin: 0; }
         .tier-dot { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
-
-        .maplibregl-popup-content { padding: 10px 14px !important; font-size: 12px; line-height: 1.6; }
-        .maplibregl-popup-content b { font-size: 13px; }
     </style>
 </head>
 <body>
     <div id="map"></div>
     <div id="controls">
-        <h1>Site Consolidation Viewer</h1>
+        <h1>Site Consolidation — Vector Tiles</h1>
 
         <div class="filter-group">
             <label>Suitability Tier</label>
@@ -108,12 +105,15 @@
 
     <script>
         const TIER_COLORS = {
-            'Tier 1 - Excellent': '#d7191c',
-            'Tier 2 - Very Good': '#fdae61',
-            'Tier 3 - Good': '#fee08b',
-            'Tier 4 - Moderate': '#a6d96a',
-            'Tier 5 - Low': '#1a9641',
+            'Tier 1 - Excellent': [215, 25, 28],
+            'Tier 2 - Very Good': [253, 174, 97],
+            'Tier 3 - Good': [254, 224, 139],
+            'Tier 4 - Moderate': [166, 217, 106],
+            'Tier 5 - Low': [26, 150, 65],
         };
+
+        let deckgl = null;
+        let selectedTiers = [];
 
         /* --- Multi-select tier dropdown --- */
         const tierBtn = document.getElementById('tierBtn');
@@ -141,11 +141,12 @@
                 tierBtn.textContent = sel.length === 0 ? 'All Tiers'
                     : sel.length <= 2 ? sel.map(s => s.replace('Tier ', 'T')).join(', ')
                     : `${sel.length} tiers selected`;
-                applyClientFilter();
+                selectedTiers = sel;
+                updateLayers();
             });
         });
 
-        /* --- Build tile URL with server-side filters --- */
+        /* --- Build tile URL --- */
         function buildTileUrl() {
             const lga = document.getElementById('lgaFilter').value;
             const minScore = document.getElementById('minScore').value;
@@ -160,146 +161,80 @@
             return `${location.origin}/api/tiles/{z}/{x}/{y}.pbf${qs ? '?' + qs : ''}`;
         }
 
-        /* --- Map --- */
-        const map = new maplibregl.Map({
-            container: 'map',
-            style: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
-            center: [145.30, -38.08],
-            zoom: 11,
-            pitch: 0,
-        });
-
-        map.addControl(new maplibregl.NavigationControl(), 'top-right');
-
-        let popup = null;
-        let hoveredFeatureId = null;
-
-        map.on('load', () => {
-            // Add vector tile source
-            map.addSource('parcels', {
-                type: 'vector',
-                tiles: [buildTileUrl()],
-                minzoom: 8,
-                maxzoom: 16,
-            });
-
-            // Fill layer with tier-based colors
-            map.addLayer({
-                id: 'parcels-fill',
-                type: 'fill',
-                source: 'parcels',
-                'source-layer': 'parcels',
-                paint: {
-                    'fill-color': [
-                        'match', ['get', 'suitability_tier'],
-                        'Tier 1 - Excellent', '#d7191c',
-                        'Tier 2 - Very Good', '#fdae61',
-                        'Tier 3 - Good', '#fee08b',
-                        'Tier 4 - Moderate', '#a6d96a',
-                        'Tier 5 - Low', '#1a9641',
-                        '#888888'
-                    ],
-                    'fill-opacity': 0.7,
-                },
-            });
-
-            // Outline layer
-            map.addLayer({
-                id: 'parcels-line',
-                type: 'line',
-                source: 'parcels',
-                'source-layer': 'parcels',
-                paint: {
-                    'line-color': '#282828',
-                    'line-width': [
-                        'interpolate', ['linear'], ['zoom'],
-                        10, 0.1,
-                        14, 0.5,
-                        16, 1.5,
-                    ],
-                    'line-opacity': 0.6,
-                },
-            });
-
-            // Highlight layer (invisible until hovered)
-            map.addLayer({
-                id: 'parcels-highlight',
-                type: 'fill',
-                source: 'parcels',
-                'source-layer': 'parcels',
-                paint: {
-                    'fill-color': '#ffffff',
-                    'fill-opacity': 0.4,
-                },
-                filter: ['==', ['get', 'parcel_id'], ''],
-            });
-
-            // Hover effect
-            map.on('mousemove', 'parcels-fill', (e) => {
-                map.getCanvas().style.cursor = 'pointer';
-                if (e.features.length > 0) {
-                    const id = e.features[0].properties.parcel_id;
-                    if (hoveredFeatureId !== id) {
-                        hoveredFeatureId = id;
-                        map.setFilter('parcels-highlight', ['==', ['get', 'parcel_id'], id]);
+        /* --- deck.gl MVTLayer — uses deck.gl's polygon renderer instead of MapLibre's
+             earcut tessellation, which produces artifacts on small cadastral polygons --- */
+        function createMVTLayer() {
+            return new deck.MVTLayer({
+                id: 'parcels-mvt',
+                data: buildTileUrl(),
+                minZoom: 8,
+                maxZoom: 16,
+                getFillColor: f => {
+                    const tier = f.properties.suitability_tier;
+                    // Client-side tier filter
+                    if (selectedTiers.length > 0 && !selectedTiers.includes(tier)) {
+                        return [0, 0, 0, 0]; // transparent
                     }
-                }
+                    const color = TIER_COLORS[tier] || [128, 128, 128];
+                    return [...color, 180];
+                },
+                getLineColor: [40, 40, 40, 180],
+                getLineWidth: 1,
+                lineWidthMinPixels: 0.3,
+                lineWidthMaxPixels: 2,
+                filled: true,
+                stroked: true,
+                pickable: true,
+                autoHighlight: true,
+                highlightColor: [255, 255, 255, 100],
+                updateTriggers: {
+                    getFillColor: [selectedTiers],
+                },
             });
+        }
 
-            map.on('mouseleave', 'parcels-fill', () => {
-                map.getCanvas().style.cursor = '';
-                hoveredFeatureId = null;
-                map.setFilter('parcels-highlight', ['==', ['get', 'parcel_id'], '']);
-            });
-
-            // Click tooltip
-            map.on('click', 'parcels-fill', (e) => {
-                if (e.features.length === 0) return;
-                const p = e.features[0].properties;
-                const html = `
-                    <b>${p.parcel_id}</b><br/>
-                    Zone: ${p.zone_code || 'N/A'}<br/>
-                    LGA: ${p.lga_name || 'N/A'}<br/>
-                    Area: ${(p.area_sqm || 0).toLocaleString()} sqm<br/>
-                    Score: <b>${p.suitability_score}</b><br/>
-                    Tier: ${p.suitability_tier}<br/>
-                    Neighbors: ${p.num_adjacent_parcels || 0}<br/>
-                    Nearest PT: ${(p.nearest_any_pt_m || 0).toLocaleString()}m
-                    ${p.is_growth_area_lga ? '<br/><span style="color:#ff9800">Growth Area LGA</span>' : ''}
-                `;
-
-                if (popup) popup.remove();
-                popup = new maplibregl.Popup({ closeOnClick: true, maxWidth: '260px' })
-                    .setLngLat(e.lngLat)
-                    .setHTML(html)
-                    .addTo(map);
-            });
-
-            // Load LGA options
-            loadLgaOptions();
-        });
-
-        /* --- Client-side tier filter (instant, no tile refetch) --- */
-        function applyClientFilter() {
-            const tiers = getSelectedTiers();
-            if (tiers.length === 0) {
-                // Show all tiers
-                map.setFilter('parcels-fill', null);
-                map.setFilter('parcels-line', null);
-            } else {
-                const filter = ['in', ['get', 'suitability_tier'], ['literal', tiers]];
-                map.setFilter('parcels-fill', filter);
-                map.setFilter('parcels-line', filter);
+        function updateLayers() {
+            if (deckgl) {
+                deckgl.setProps({ layers: [createMVTLayer()] });
             }
         }
 
-        /* --- Server-side filters (LGA, min_score, exclude_growth) — requires tile refetch --- */
-        function applyFilters() {
-            const source = map.getSource('parcels');
-            if (source) {
-                source.setTiles([buildTileUrl()]);
+        /* --- Initialize deck.gl with MVTLayer --- */
+        deckgl = new deck.DeckGL({
+            container: 'map',
+            mapStyle: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+            initialViewState: {
+                longitude: 145.30,
+                latitude: -38.08,
+                zoom: 11,
+                pitch: 0,
+            },
+            controller: true,
+            layers: [createMVTLayer()],
+            getTooltip: ({object}) => {
+                if (!object || !object.properties) return null;
+                const p = object.properties;
+                return {
+                    html: `
+                        <b>${p.parcel_id}</b><br/>
+                        Zone: ${p.zone_code || 'N/A'}<br/>
+                        LGA: ${p.lga_name || 'N/A'}<br/>
+                        Area: ${(p.area_sqm || 0).toLocaleString()} sqm<br/>
+                        Score: <b>${p.suitability_score}</b><br/>
+                        Tier: ${p.suitability_tier}<br/>
+                        Neighbors: ${p.num_adjacent_parcels || 0}<br/>
+                        Nearest PT: ${(p.nearest_any_pt_m || 0).toLocaleString()}m
+                        ${p.is_growth_area_lga ? '<br/><span style="color:#ff9800">Growth Area LGA</span>' : ''}
+                    `,
+                    style: { backgroundColor: 'rgba(0,0,0,0.85)', color: 'white',
+                             fontSize: '12px', padding: '10px 14px', borderRadius: '6px' }
+                };
             }
-            applyClientFilter();
+        });
+
+        /* --- Server-side filters (refetch tiles) --- */
+        function applyFilters() {
+            updateLayers();
         }
 
         /* --- Load LGA dropdown --- */
@@ -318,6 +253,7 @@
                 console.warn('Could not load LGA list:', err);
             }
         }
+        loadLgaOptions();
     </script>
 </body>
 </html>

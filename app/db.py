@@ -37,9 +37,11 @@ def _get_lakebase_credentials() -> dict:
     pg_database = os.getenv("PGDATABASE") or os.getenv("LAKEBASE_DATABASE", "vic_consolidation_db")
     pg_user = os.getenv("PGUSER") or os.getenv("LAKEBASE_USER", "vic_consolidation_app")
 
-    # Auth: use explicit LAKEBASE_PASSWORD if set (native role),
-    # otherwise generate an OAuth token for the SP (Lakebase resource mode)
-    pg_password = os.getenv("LAKEBASE_PASSWORD") or _generate_lakebase_token()
+    # Auth priority:
+    # 1. LAKEBASE_PASSWORD (native role, local dev)
+    # 2. PGPASSWORD (injected by Lakebase App Resource)
+    # 3. SP OAuth token via Databricks SDK
+    pg_password = os.getenv("LAKEBASE_PASSWORD") or os.getenv("PGPASSWORD") or _generate_lakebase_token()
 
     logger.info(f"Connecting as {pg_user} to {pg_host}:{pg_port}/{pg_database}")
 
